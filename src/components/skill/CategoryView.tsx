@@ -81,7 +81,9 @@ export function CategoryView({
   const [drawerFile, setDrawerFile] = useState<LibTreeFile | null>(null);
 
   const stack = useMemo<LibTreeNode[]>(() => {
-    const root = tree.find((r) => r.label === label) ?? tree[0] ?? null;
+    // 不匹配时不得兜底选树（tree[0] 会渲染无关工具的目录，见「示例技能幽灵」bug）：
+    // 找不到对应扫描根 → 空栈 → 下方空态提示，而不是展示别的工具的技能。
+    const root = tree.find((r) => r.label === label) ?? null;
     if (!root) return [];
     const st: LibTreeNode[] = [root.root];
     let cur = root.root;

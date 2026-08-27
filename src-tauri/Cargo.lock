@@ -3311,6 +3311,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "shark-skills-manager"
+version = "0.2.3"
+dependencies = [
+ "chrono",
+ "dirs",
+ "junction",
+ "regex",
+ "serde",
+ "serde_json",
+ "serde_yaml_ng",
+ "sha2 0.10.9",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-opener",
+ "tempfile",
+ "tokio",
+ "trash",
+ "ureq",
+ "walkdir",
+ "zip",
+]
+
+[[package]]
 name = "shlex"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3337,30 +3361,6 @@ name = "siphasher"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ee5873ec9cce0195efcb7a4e9507a04cd49aec9c83d0389df45b1ef7ba2e649"
-
-[[package]]
-name = "skills-shark"
-version = "0.2.2"
-dependencies = [
- "chrono",
- "dirs",
- "junction",
- "regex",
- "serde",
- "serde_json",
- "serde_yaml_ng",
- "sha2 0.10.9",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-opener",
- "tempfile",
- "tokio",
- "trash",
- "ureq",
- "walkdir",
- "zip",
-]
 
 [[package]]
 name = "slab"

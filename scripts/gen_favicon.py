@@ -2,7 +2,7 @@
 import base64
 from pathlib import Path
 
-here = Path(__file__).resolve().parent.parent / "frontend"
+here = Path(__file__).resolve().parent.parent
 png = (here / "src/assets/brand/fin-light.png").read_bytes()
 b64 = base64.b64encode(png).decode()
 

@@ -1,6 +1,6 @@
 """从新 logo 提取纯图形（鳍+浪），生成深浅两色透明 PNG + App 图标源图。
 
-产物（frontend/src/assets/brand/）：
+产物（src/assets/brand/）：
   fin-light.png   透明底 · 黑鳍 + 橙浪（浅色主题/浅色任务栏）
   fin-dark.png    透明底 · 白鳍 + 橙浪（深色主题/深色任务栏）
   appicon-src.png 1024 · 暖纸圆角底 + 黑鳍橙浪（供 npx tauri icon 生成全套）
@@ -8,7 +8,7 @@
 from PIL import Image, ImageDraw
 
 SRC = r"website/assets/ChatGPT Image 2026年8月11日 10_29_32.png"
-OUT = r"frontend/src/assets/brand"
+OUT = r"src/assets/brand"
 
 im = Image.open(SRC).convert("RGB")
 w, h = im.size

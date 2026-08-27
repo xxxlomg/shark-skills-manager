@@ -6,7 +6,7 @@
 看懂它（流式翻译成中英对照）、管好它（分类 / 搜索 / 状态追踪）、分享它（打包成 `.skillpack` 在平台内流通）。
 
 **正式版入口**：[gitee.com/xxxlomg/shark-skills-manager](https://gitee.com/xxxlomg/shark-skills-manager)
-当前发布形态：**Windows x64 绿色解压版**（`SkillsShark.exe` 与 `skills/` 同级目录，免安装随取随用）
+当前发布形态：**Windows x64 绿色解压版**（`shark-skills-manager.exe` 与 `skills/` 同级目录，免安装随取随用）
 
 ---
 
@@ -32,8 +32,8 @@
 
 ### 绿色解压版（推荐，当前发布形态）
 
-1. 从[正式版入口](https://gitee.com/xxxlomg/shark-skills-manager)下载 `SkillsShark_<version>_win64.zip`；
-2. 解压后进入 `SkillsShark/`，双击 `SkillsShark.exe`；
+1. 从[正式版入口](https://gitee.com/xxxlomg/shark-skills-manager)下载 `shark-skills-manager_<version>_win64.zip`；
+2. 解压后进入 `shark-skills-manager/`，双击 `shark-skills-manager.exe`；
 3. 若 Windows 提示「Windows protected your PC」：点「更多信息」→「仍要运行」（未签名绿色软件的正常提示）。
 
 ### 源码构建

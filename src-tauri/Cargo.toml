@@ -1,7 +1,7 @@
 [package]
-name = "skills-shark"
-version = "0.2.2"
-description = "SkillsShark - 多路径 Skills 管理与翻译工具"
+name = "shark-skills-manager"
+version = "0.2.3"
+description = "shark-skills-manager - 多路径 Skills 管理与翻译工具"
 authors = ["you"]
 edition = "2021"
 

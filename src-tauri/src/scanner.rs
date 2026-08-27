@@ -852,8 +852,8 @@ mod tests {
             "builtin 扫描不得包含内部技能"
         );
         assert!(
-            bu_skills.iter().any(|s| s.folder_name == "skills-shark-packs"),
-            "内置公开技能保持可见: {:?}",
+            bu_skills.iter().any(|s| s.folder_name == "skills-shark-quickstart"),
+            "内置公开技能保持可见（quickstart 是现役内置示例）: {:?}",
             bu_skills.iter().map(|s| &s.folder_name).collect::<Vec<_>>()
         );
     }

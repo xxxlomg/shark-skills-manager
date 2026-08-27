@@ -53,11 +53,11 @@ thread_local! {
     static TEST_DATA_DIR: RefCell<Option<PathBuf>> = RefCell::new(None);
 }
 
-/// 项目根（frontend/src-tauri 上两级 = skills-shark/）
+/// 仓库根：Cargo 清单所在（src-tauri/）的父目录。
+/// 扁平化结构后直接上一层即可（历史 frontend/ 嵌套时期需上两层）。
 fn project_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .and_then(|p| p.parent())
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| PathBuf::from("."))
 }

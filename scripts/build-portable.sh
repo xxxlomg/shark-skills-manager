@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # ===========================================================================
-#  SkillsShark portable build script (green / unzip-and-run) - macOS / Linux
+#  shark-skills-manager portable build script (green / unzip-and-run) - macOS / Linux
 #  Output :
-#    macOS : dist-portable/SkillsShark_<version>_macos.zip
-#            SkillsShark.app + skills/ side by side, double-click to run
-#    Linux : dist-portable/SkillsShark_<version>_linux-x86_64.zip
-#            skills-shark + skills/ side by side, chmod +x then run
+#    macOS : dist-portable/shark-skills-manager_<version>_macos.zip
+#            shark-skills-manager.app + skills/ side by side, double-click to run
+#    Linux : dist-portable/shark-skills-manager_<version>_linux-x86_64.zip
+#            shark-skills-manager + skills/ side by side, chmod +x then run
 #
 #  ASCII-only on purpose (same as the .bat sibling): keeps the script safe
 #  under any locale. Linux uses --no-bundle to get the raw binary; macOS uses
@@ -16,7 +16,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUTROOT="$ROOT/dist-portable"
-OUT="$OUTROOT/SkillsShark"
+OUT="$OUTROOT/shark-skills-manager"
 
 # --- read version (tauri.conf.json.version) ---
 VERSION="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$ROOT/src-tauri/tauri.conf.json" | head -n1)"
@@ -28,7 +28,7 @@ case "$OS" in
     PLAT="macos"
     echo "=== [1/3] building release (npx tauri build --bundles app) ==="
     ( cd "$ROOT" && npx tauri build --bundles app )
-    APP="$ROOT/src-tauri/target/release/bundle/macos/SkillsShark.app"
+    APP="$ROOT/src-tauri/target/release/bundle/macos/shark-skills-manager.app"
     [ -d "$APP" ] || { echo "[ERROR] .app not found: $APP" >&2; exit 1; }
     echo "=== [2/3] assembling portable directory ==="
     rm -rf "$OUT"; mkdir -p "$OUT"
@@ -39,11 +39,11 @@ case "$OS" in
     PLAT="linux-x86_64"
     echo "=== [1/3] building release (npx tauri build --no-bundle) ==="
     ( cd "$ROOT" && npx tauri build --no-bundle )
-    BIN="$ROOT/src-tauri/target/release/skills-shark"
+    BIN="$ROOT/src-tauri/target/release/shark-skills-manager"
     [ -x "$BIN" ] || { echo "[ERROR] binary not found: $BIN" >&2; exit 1; }
     echo "=== [2/3] assembling portable directory ==="
     rm -rf "$OUT"; mkdir -p "$OUT"
-    cp "$BIN" "$OUT/skills-shark"
+    cp "$BIN" "$OUT/shark-skills-manager"
     cp -R "$ROOT/skills" "$OUT/skills"
     ;;
   *)
@@ -52,12 +52,12 @@ case "$OS" in
     ;;
 esac
 
-ZIP="$OUTROOT/SkillsShark_${VERSION}_${PLAT}.zip"
+ZIP="$OUTROOT/shark-skills-manager_${VERSION}_${PLAT}.zip"
 
 echo "=== [3/3] packing zip ==="
 rm -f "$ZIP"
 if command -v zip >/dev/null 2>&1; then
-  ( cd "$OUTROOT" && zip -r -q "$(basename "$ZIP")" SkillsShark )
+  ( cd "$OUTROOT" && zip -r -q "$(basename "$ZIP")" shark-skills-manager )
 else
   python3 -m zipfile -c "$ZIP" "$OUT"
 fi
@@ -65,11 +65,11 @@ fi
 echo ""
 echo "Done: $ZIP"
 echo "Extracted layout:"
-echo "  SkillsShark/{"
+echo "  shark-skills-manager/{"
 if [ "$OS" = "Darwin" ]; then
-  echo "    SkillsShark.app    <- double-click to run"
+  echo "    shark-skills-manager.app    <- double-click to run"
 else
-  echo "    skills-shark       <- chmod +x skills-shark, then ./skills-shark"
+  echo "    shark-skills-manager       <- chmod +x shark-skills-manager, then ./shark-skills-manager"
 fi
 echo "    skills/             <- built-in sample skills (editable)"
 echo "  }"

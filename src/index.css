@@ -1,0 +1,952 @@
+@import "tailwindcss" source(none);
+@import "tw-animate-css";
+@source "./";
+
+/* 字体：纯系统字体栈（零请求、零加载）。
+   历史：Google Fonts 外链渲染阻塞拖垮启动 → 自托管 woff2 → 最终按用户要求
+   换系统栈。视觉个性让位于启动速度；Windows 用 Segoe UI 系，macOS 回退
+   PingFang/-apple-system。 */
+
+/*
+ * shark skills — 瑞士国际主义主题（Swiss International Style）· 鲨鱼线稿品牌
+ * 视觉真相来源：website/design/spec.css（v0.2.2 设计规范）
+ * 原则：强网格 / 大留白 / 左对齐 / 发丝线代替阴影 / 单一强调色 / 克制动效
+ * dark 默认，light 由 [data-theme="light"] 切换
+ */
+
+/* ==================== Design Tokens ==================== */
+
+:root,
+[data-theme="dark"] {
+  /* 背景 — 深石板蓝（非纯黑，降眼疲劳） */
+  --bg-0: #0b1220;
+  --bg-1: #10182a;
+
+  /* 表面 — 瑞士风纯色（去玻璃，发丝线定义边界） */
+  --glass: #0f1728;
+  --glass-2: #151e32;
+  /* 卡片/行 hover 背景：在纯色基础上微提一档（无上浮、无辉光） */
+  --card-hover: #1c2740;
+
+  /* 发丝线 */
+  --stroke: #243149;
+  --stroke-hi: #354563;
+
+  /* 内部高光 — 已废弃（无玻璃反光） */
+  --hi: transparent;
+
+  /* 文字 */
+  --text: #e6edf7;
+  --text-2: #9aa8bb;
+  --text-3: #5e6c82;
+
+  --amber: #f5b356;
+  --green: #4ade80;
+  --rose: #f87171;
+
+  /* 背景光晕 — 已废弃（无光晕） */
+  --blob2: transparent;
+
+  /* 网格线 — 极淡，凸显结构而非装饰 */
+  --grid: rgba(230, 237, 247, 0.04);
+
+  /* 阴影 — 极浅，仅用于浮层层级 */
+  --shadow: rgba(0, 0, 0, 0.45);
+
+  /* 柔和分层阴影（浮层层级）— 深色 */
+  --elev-1: 0 1px 2px 0 rgb(0 0 0 / 0.4), 0 8px 24px -12px rgb(0 0 0 / 0.5);
+  --elev-2: 0 2px 6px rgb(0 0 0 / 0.5), 0 24px 48px -24px rgb(0 0 0 / 0.6);
+
+  /* 遮罩 */
+  --overlay: rgba(4, 8, 16, 0.6);
+  --overlay-cmdk: rgba(4, 8, 16, 0.55);
+
+  color-scheme: dark;
+}
+
+[data-theme="light"] {
+  /* 背景 — 冷白石板（去米黄，偏冷灰白） */
+  --bg-0: #f8fafc;
+  --bg-1: #f1f5f9;
+
+  /* 表面 — 纯白面板 */
+  --glass: #ffffff;
+  --glass-2: #ffffff;
+  /* 卡片/行 hover 背景：浅主题下微冷一档 */
+  --card-hover: #f1f5f9;
+
+  /* 发丝线 */
+  --stroke: #e2e8f0;
+  --stroke-hi: #cbd5e1;
+  --hi: transparent;
+
+  /* 文字 */
+  --text: #1e293b;
+  --text-2: #475569;
+  --text-3: #94a3b8;
+
+  --amber: #d97706;
+  --green: #2f9e6e;
+  --rose: #e0524a;
+
+  --blob2: transparent;
+
+  --grid: rgba(15, 23, 42, 0.04);
+  --shadow: rgba(15, 23, 42, 0.06);
+
+  /* 柔和分层阴影（浮层层级）— 浅色 */
+  --elev-1: 0 1px 2px 0 rgb(15 23 42 / 0.05), 0 8px 24px -12px rgb(15 23 42 / 0.12);
+  --elev-2: 0 2px 6px rgb(15 23 42 / 0.06), 0 24px 48px -24px rgb(15 23 42 / 0.22);
+
+  --overlay: rgba(15, 23, 42, 0.3);
+  --overlay-cmdk: rgba(15, 23, 42, 0.25);
+
+  color-scheme: light;
+}
+
+/* ==================== 主题色预设（html[data-accent]） ====================
+ * 珊瑚橙为默认（:root 兜底）；瑞士风收敛为单强调色，其余预设保留但
+ * blob/glow 已归零（无光晕）。选择与持久化见 src/lib/accent.ts。 */
+
+/* ---- 珊瑚橙 coral（默认） ---- */
+:root {
+  --accent: #ff6a45;
+  --accent-2: #e84e26;
+  --cyan: #ff6a45;
+  --glow: transparent;
+  --blob1: transparent;
+  --blob3: transparent;
+}
+[data-theme="light"] {
+  --accent: #ff6a45;
+  --accent-2: #e84e26;
+  --cyan: #ff6a45;
+  --glow: transparent;
+  --blob1: transparent;
+  --blob3: transparent;
+}
+/* 显式珊瑚橙（与 :root 默认一致，选择持久化后 data-accent="coral" 时命中） */
+html[data-accent="coral"] {
+  --accent: #ff6a45;
+  --accent-2: #e84e26;
+  --cyan: #ff6a45;
+  --glow: transparent;
+  --blob1: transparent;
+  --blob3: transparent;
+}
+
+/* ---- 苔绿 moss ---- */
+[data-theme="dark"][data-accent="moss"] {
+  --accent: #a8c686;
+  --accent-2: #7fa060;
+  --cyan: #a8c686;
+  --glow: transparent;
+  --blob1: transparent;
+  --blob3: transparent;
+}
+[data-theme="light"][data-accent="moss"] {
+  --accent: #55763c;
+  --accent-2: #46622f;
+  --cyan: #55763c;
+  --glow: transparent;
+  --blob1: transparent;
+  --blob3: transparent;
+}
+
+/* ---- 黛紫 violet ---- */
+[data-theme="dark"][data-accent="violet"] {
+  --accent: #a78bfa;
+  --accent-2: #8b5cf6;
+  --cyan: #a78bfa;
+  --glow: transparent;
+  --blob1: transparent;
+  --blob3: transparent;
+}
+[data-theme="light"][data-accent="violet"] {
+  --accent: #7c3aed;
+  --accent-2: #6d28d9;
+  --cyan: #7c3aed;
+  --glow: transparent;
+  --blob1: transparent;
+  --blob3: transparent;
+}
+
+/* ---- 湖蓝 azure ---- */
+[data-theme="dark"][data-accent="azure"] {
+  --accent: #38bdf8;
+  --accent-2: #0284c7;
+  --cyan: #38bdf8;
+  --glow: transparent;
+  --blob1: transparent;
+  --blob3: transparent;
+}
+[data-theme="light"][data-accent="azure"] {
+  --accent: #0369a1;
+  --accent-2: #075985;
+  --cyan: #0369a1;
+  --glow: transparent;
+  --blob1: transparent;
+  --blob3: transparent;
+}
+
+/* ---- 枫橙 amber ---- */
+[data-theme="dark"][data-accent="amber"] {
+  --accent: #fdba74;
+  --accent-2: #f97316;
+  --cyan: #fdba74;
+  --glow: transparent;
+  --blob1: transparent;
+  --blob3: transparent;
+}
+[data-theme="light"][data-accent="amber"] {
+  --accent: #c2410c;
+  --accent-2: #9a3412;
+  --cyan: #c2410c;
+  --glow: transparent;
+  --blob1: transparent;
+  --blob3: transparent;
+}
+
+/* ==================== 亮色主题背景随 accent 微调 ====================
+ * 冷白石板底不再固定一色：按所选主题色给 --bg-0/--bg-1 一档极淡的同色相偏移，
+ * 保持干净清透与瑞士风的克制，同时让主题色在页面底色上可感知。 */
+[data-theme="light"][data-accent="coral"] {
+  --bg-0: #fdf9f7;
+  --bg-1: #f9f2ef;
+}
+[data-theme="light"][data-accent="moss"] {
+  --bg-0: #f7faf5;
+  --bg-1: #f0f5ec;
+}
+[data-theme="light"][data-accent="violet"] {
+  --bg-0: #f9f8fd;
+  --bg-1: #f2f0fa;
+}
+[data-theme="light"][data-accent="azure"] {
+  --bg-0: #f6fafd;
+  --bg-1: #eef4f9;
+}
+[data-theme="light"][data-accent="amber"] {
+  --bg-0: #fdfaf5;
+  --bg-1: #f9f3ea;
+}
+
+/* ==================== Tailwind v4 @theme 注册 ==================== */
+
+/* dark: 变体绑定 data-theme 属性（next-themes attribute="data-theme"） */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+@theme inline {
+  --color-bg-0: var(--bg-0);
+  --color-bg-1: var(--bg-1);
+  --color-glass: var(--glass);
+  --color-glass-2: var(--glass-2);
+  --color-stroke: var(--stroke);
+  --color-stroke-hi: var(--stroke-hi);
+  --color-hi: var(--hi);
+  --color-text-primary: var(--text);
+  --color-text-secondary: var(--text-2);
+  --color-text-tertiary: var(--text-3);
+
+  /* 品牌强调色（紫色系）— 新组件用 brand，避免与 shadcn accent 语义冲突 */
+  --color-brand: var(--accent);
+  --color-brand-2: var(--accent-2);
+  --color-cyan: var(--cyan);
+  --color-amber: var(--amber);
+  --color-green: var(--green);
+  --color-rose: var(--rose);
+  --color-glow: var(--glow);
+  --color-shadow: var(--shadow);
+
+  --font-display: "Segoe UI Variable Display", "Segoe UI", "PingFang SC",
+    "Microsoft YaHei", system-ui, sans-serif;
+  --font-body: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui,
+    -apple-system, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Code", "SF Mono", Consolas,
+    "Liberation Mono", monospace;
+
+  /* shadcn/ui 兼容映射 — 让已有 ui 组件自动继承玻璃主题 */
+  --color-background: var(--bg-0);
+  --color-foreground: var(--text);
+  --color-card: var(--glass-2);
+  --color-card-foreground: var(--text);
+  --color-popover: var(--glass-2);
+  --color-popover-foreground: var(--text);
+  --color-primary: var(--accent-2);
+  --color-primary-foreground: #ffffff;
+  --color-secondary: var(--glass);
+  --color-secondary-foreground: var(--text);
+  --color-muted: var(--glass);
+  --color-muted-foreground: var(--text-2);
+  /* shadcn 语义：accent = 轻悬浮背景，不是强调色 */
+  --color-accent: var(--glass-2);
+  --color-accent-foreground: var(--text);
+  --color-destructive: var(--rose);
+  --color-destructive-foreground: #ffffff;
+  --color-border: var(--stroke);
+  --color-input: var(--stroke);
+  --color-ring: var(--accent);
+
+  /* 柔和现代圆角 — 圆润边界（shadcn 软边，16px 为卡片/对话框上限） */
+  --radius-sm: 0.375rem;   /* 6px */
+  --radius-md: 0.5rem;     /* 8px */
+  --radius-lg: 0.75rem;    /* 12px */
+  --radius-xl: 1rem;       /* 16px */
+  --radius-2xl: 1.25rem;   /* 20px */
+
+  /* 柔和分层阴影 — 经 --elev-* 令牌随明暗切换 */
+  --shadow-sm: var(--elev-1);
+  --shadow-md: var(--elev-1);
+  --shadow-lg: var(--elev-2);
+  --shadow-xl: var(--elev-2);
+  --shadow-2xl: var(--elev-2);
+
+  /* 动效 — 克制动效，仅状态反馈 */
+  --animate-drift1: none;
+  --animate-drift2: none;
+  --animate-drift3: none;
+  --animate-rise: rise 0.3s cubic-bezier(0.4, 0, 0.2, 1) both;
+  --animate-shimmer: shimmer 2.4s linear infinite;
+  --animate-pulse-dot: pulse-dot 1.8s ease-in-out infinite;
+  --animate-blink: blink 1s steps(1) infinite;
+  --animate-tin: tin 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  --animate-view-enter: view-enter 0.2s ease-out both;
+}
+
+/* ==================== Keyframes ==================== */
+
+@keyframes drift1 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(8vw, 6vh) scale(1.12); }
+}
+@keyframes drift2 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(-7vw, 5vh) scale(1.08); }
+}
+@keyframes drift3 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(5vw, -6vh) scale(1.1); }
+}
+
+/* ==================== drift 动画性能/无障碍兜底 ==================== */
+/* 页面隐藏时暂停背景漂移（BackgroundFX 经 visibilitychange 切类），后台 GPU 零功耗 */
+.fx-paused [class*="animate-drift"] {
+  animation-play-state: paused;
+}
+/* 系统「减少动态效果」偏好：直接停用 drift（写在 layer 外，优先级高于 Tailwind utilities） */
+@media (prefers-reduced-motion: reduce) {
+  [class*="animate-drift"] {
+    animation: none;
+  }
+}
+@keyframes rise {
+  from { opacity: 0; transform: translateY(16px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+@keyframes blink {
+  50% { opacity: 0; }
+}
+@keyframes tin {
+  from { opacity: 0; transform: translateY(-12px) scale(0.96); }
+}
+/* 纯 opacity：fill-mode both 会保留 translateY(0)（非 none transform），
+   会破坏工作台 sticky 顶栏的包含块 —— 故去掉 transform（PLAN-08 §6①）。 */
+@keyframes view-enter {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* ==================== Base ==================== */
+
+@layer base {
+  * {
+    border-color: var(--stroke);
+    box-sizing: border-box;
+  }
+
+  html {
+    background: var(--bg-0);
+    /* 预留滚动条槽位：内容高度变化（切布局/切 tab）时不再挤压抖动 */
+    scrollbar-gutter: stable;
+  }
+
+  /* scrollbar-gutter:stable 下锁滚动时滚动槽仍保留，
+     react-remove-scroll 的 margin-right 补偿变成双重补偿（主页被左挤一个滚动条宽）。
+     用更高特异性覆盖其运行时注入的 !important 样式。 */
+  html body[data-scroll-locked] {
+    margin-right: 0 !important;
+  }
+
+  body {
+    margin: 0;
+    background: transparent;
+    color: var(--text);
+    font-family: var(--font-body);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  #root {
+    min-height: 100dvh;
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  ::selection {
+    background: var(--accent);
+    color: #fff;
+  }
+
+  /* 滚动条 */
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: var(--glass-2);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--stroke-hi);
+    background-clip: padding-box;
+  }
+}
+
+/* ==================== 表面配方（瑞士风：纯色 + 发丝线，无玻璃） ==================== */
+
+/* 基础表面：顶栏、统计条、CmdK 面板、Toast */
+.glass {
+  background: var(--glass);
+  border: 1px solid var(--stroke);
+}
+
+/* 卡片表面：分类卡、技能卡、Pack 卡（柔和现代：圆角 + 轻 accent 染色 + 柔影） */
+.glass-card {
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--accent) 3%, transparent), transparent 42%),
+    var(--glass-2);
+  border: 1px solid color-mix(in srgb, var(--accent) 8%, var(--stroke));
+  border-radius: var(--radius-xl);
+  box-shadow: var(--elev-1);
+}
+
+/* 顶栏表面 */
+.glass-topbar {
+  background: var(--glass);
+  border-bottom: 1px solid var(--stroke);
+}
+
+/* 侧栏表面（PLAN-10 侧栏重构）：全高侧边栏，右边框分隔主内容区 */
+.glass-sidebar {
+  background: var(--glass);
+  border-right: 1px solid var(--stroke);
+}
+
+/* 侧滑面板表面 */
+.glass-sheet {
+  background: var(--glass-2);
+  border-left: 1px solid var(--stroke-hi);
+}
+
+/* ==================== 工作台画布（主题自适应） ====================
+ * 查重 / 对比 / 合并 / 创作等工作页面沿用全局 --bg-0 作画布底色：
+ * 该令牌已随 data-theme（明暗）与 data-accent（主题色）联动，画布不再
+ * 硬编码米黄/近黑，始终与用户在设置中选择的主题色一致。背景为实色不透明，
+ * 保证文字清晰；画布与面板（--glass/--glass-2）的层级对比由表面令牌自然拉开。 */
+.workbench-canvas {
+  background: var(--bg-0);
+}
+
+/* ==================== 卡片动效 ==================== */
+
+/* 卡片入场 stagger：通过 --i 变量控制延迟 */
+.card-wrap {
+  animation: rise 0.3s cubic-bezier(0.4, 0, 0.2, 1) both;
+  animation-delay: calc(var(--i, 0) * 40ms);
+}
+
+/* 卡片/行 hover（瑞士风统一反馈）：背景微提 + 发丝线加深，无上浮无辉光。
+   Boss 反馈：网格/行布局悬停时看不出鼠标在哪，卡片与行用同一套动画。 */
+.glass-card,
+.glass-row,
+.glass-card-hover {
+  transition:
+    border-color 0.18s ease,
+    background-color 0.18s ease,
+    transform 0.18s ease,
+    box-shadow 0.18s ease;
+}
+.glass-card:hover,
+.glass-row:hover,
+.card-wrap:hover .glass-card-hover,
+.glass-card-hover:hover {
+  /* 发丝线染色而非实色描边：避免浅主题下「实色框+实色底」的割裂感 */
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--stroke-hi));
+  /* Boss 反馈：悬停不渲染背景色，仅靠发丝线/上浮/投影/装饰条拉伸作位置信号 */
+  transform: translateY(-2px);
+  box-shadow: 0 10px 24px -16px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+/* 选中卡片（批量选择）：从上到下 accent 渐变渐隐 + 轻微毛玻璃。
+   替代原「实色 accent 底」，实色在浅/深两套下都显生硬割裂（Boss 反馈）。
+   二轮反馈：accent 渲染太重 → 降浓度、提高底色不透明度、改上下渐变。 */
+.card-selected {
+  border-color: color-mix(in srgb, var(--accent) 26%, var(--stroke));
+  background:
+    linear-gradient(to bottom, color-mix(in srgb, var(--accent) 3%, transparent) 0%, transparent 35%),
+    color-mix(in srgb, var(--glass-2) 82%, transparent);
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+}
+
+/* diff 滚动区：滚动条始终可视。全局滚动条 thumb 用 --glass-2，在 bg-glass
+   卡片上几乎不可见（Boss：找不到滚动条）。这里提一档对比度 + 常显轨道。 */
+.diff-scroll {
+  scrollbar-gutter: stable;
+}
+.diff-scroll::-webkit-scrollbar {
+  width: 11px;
+  height: 11px;
+}
+.diff-scroll::-webkit-scrollbar-track {
+  background: var(--glass-2);
+  border-radius: 999px;
+}
+.diff-scroll::-webkit-scrollbar-thumb {
+  background: var(--stroke-hi);
+  border-radius: 999px;
+  border: 2px solid var(--glass-2);
+  background-clip: padding-box;
+}
+.diff-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--accent);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+/* 提示气泡：反色面板（浅主题深底、深主题浅底），与表面拉层级 */
+.tip-bubble {
+  background: var(--text);
+  color: var(--bg-0);
+}
+
+
+
+/* 卡片 hover 与辉光 — 已废弃（瑞士风无辉光） */
+
+/* ==================== 区块头 / 返回按钮 ==================== */
+
+.sec-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  margin: 30px 0 18px;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.sec-title {
+  font-family: var(--font-display);
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  position: relative;
+  display: inline-block;
+  color: var(--text);
+}
+.sec-title::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: -7px;
+  width: 42px;
+  height: 3px;
+  background: var(--accent);
+}
+.sec-sub {
+  color: var(--text-2);
+  font-size: 13px;
+  margin-top: 14px;
+}
+.sec-acts {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+/* 返回按钮 */
+.back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  color: var(--text-2);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 8px 14px;
+  border-radius: var(--radius-md);
+  background: var(--glass);
+  border: 1px solid var(--stroke);
+  transition: border-color 0.15s ease, color 0.15s ease;
+  margin-bottom: 4px;
+}
+.back-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* 线性按钮（瑞士风：直角微圆角） */
+.mbtn {
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 500;
+  padding: 7px 13px;
+  border-radius: var(--radius-md);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-2);
+  background: var(--glass);
+  border: 1px solid var(--stroke);
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+.mbtn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.mbtn.primary {
+  color: #fff;
+  background: var(--accent);
+  border-color: transparent;
+  box-shadow: var(--elev-1);
+  transition: background-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+}
+.mbtn.primary:hover {
+  background: var(--accent-2);
+  /* 已主题色的主按钮：悬停保持白字，改用轻微上浮 + 投影，绝不动文字色 */
+  color: #fff;
+  transform: translateY(-1px);
+  box-shadow: 0 3px 10px -4px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.mbtn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+/* 危险操作变体（删除等）：扫红描边，悬停实心红 */
+.mbtn.danger {
+  color: var(--rose);
+  border-color: color-mix(in srgb, var(--rose) 45%, transparent);
+}
+.mbtn.danger:hover {
+  color: #fff;
+  background: var(--rose);
+  border-color: transparent;
+}
+
+/* ==================== 功能动效 ==================== */
+
+/* 翻译进度条（瑞士风：纯色，无流光） */
+.prog-fill {
+  position: relative;
+  overflow: hidden;
+  background: var(--accent);
+  transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* 翻译状态光点（无辉光） */
+.sd {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.sd-ok { background: var(--green); }
+.sd-old { background: var(--amber); animation: pulse-dot 1.8s ease-in-out infinite; }
+.sd-lost { background: var(--amber); }
+.sd-no { background: var(--text-3); }
+
+/* 翻译流式光标（无辉光） */
+.streaming-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1.05em;
+  background: var(--accent);
+  vertical-align: -2px;
+  margin-left: 1px;
+  animation: blink 1s steps(1) infinite;
+}
+
+/* 快捷键提示 */
+.kbd {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--glass-2);
+  border: 1px solid var(--stroke);
+  color: var(--text-2);
+}
+
+/* 线性按钮（瑞士风：直角微圆角，hover 仅描边） */
+.mbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--stroke);
+  background: var(--glass);
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-weight: 500;
+  font-family: var(--font-body);
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+  white-space: nowrap;
+}
+.mbtn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.mbtn-primary {
+  background: var(--accent);
+  border-color: transparent;
+  color: #fff;
+}
+.mbtn-primary:hover {
+  background: var(--accent-2);
+  color: #fff;
+}
+
+/* 图标按钮（瑞士风：微圆角，hover 仅描边） */
+.iconbtn {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--stroke);
+  background: var(--glass);
+  color: var(--text-2);
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+  flex-shrink: 0;
+}
+.iconbtn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ==================== Markdown 渲染（玻璃主题适配） ==================== */
+
+.md-content h1 { font-family: var(--font-display); font-size: 22px; font-weight: 600; margin: 24px 0 12px; color: var(--text); }
+.md-content h2 { font-family: var(--font-display); font-size: 18px; font-weight: 600; margin: 20px 0 10px; color: var(--text); }
+.md-content h3 { font-family: var(--font-display); font-size: 15.5px; font-weight: 600; margin: 16px 0 8px; color: var(--text); }
+.md-content h4 { font-size: 14px; font-weight: 600; margin: 12px 0 6px; color: var(--text); }
+.md-content p { margin: 8px 0; line-height: 1.7; font-size: 13.5px; color: var(--text); }
+.md-content ul { list-style: disc; padding-left: 24px; margin: 8px 0; }
+.md-content ol { list-style: decimal; padding-left: 24px; margin: 8px 0; }
+.md-content li { margin: 4px 0; line-height: 1.65; font-size: 13.5px; color: var(--text); }
+.md-content blockquote {
+  border-left: 3px solid var(--accent);
+  padding: 6px 14px;
+  margin: 12px 0;
+  background: var(--glass);
+  border-radius: 0 10px 10px 0;
+  color: var(--text-2);
+  font-size: 13px;
+}
+.md-content code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: var(--glass-2);
+  border: 1px solid var(--stroke);
+  color: var(--accent);
+}
+.md-content pre {
+  background: var(--glass);
+  border: 1px solid var(--stroke);
+  border-radius: 6px;
+  padding: 14px 16px;
+  margin: 12px 0;
+  overflow-x: auto;
+}
+.md-content pre code {
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+.md-content table { width: 100%; border-collapse: collapse; margin: 0; font-size: 12.5px; }
+.md-content .table-wrap { overflow-x: auto; margin: 12px 0; border: 1px solid var(--stroke); border-radius: 6px; }
+.md-content th {
+  border-bottom: 1px solid var(--stroke);
+  border-right: 1px solid var(--stroke);
+  padding: 8px 12px;
+  text-align: left;
+  font-weight: 600;
+  background: var(--glass-2);
+  color: var(--text);
+  white-space: nowrap;
+}
+.md-content th:last-child { border-right: none; }
+.md-content td {
+  border-bottom: 1px solid var(--stroke);
+  border-right: 1px solid var(--stroke);
+  padding: 8px 12px;
+  color: var(--text-2);
+}
+.md-content td:last-child { border-right: none; }
+.md-content tbody tr:last-child td { border-bottom: none; }
+.md-content a { color: var(--accent); text-decoration: none; border-bottom: 1px solid transparent; transition: border-color 0.2s; }
+.md-content a:hover { border-bottom-color: var(--accent); }
+.md-content img {
+  max-width: 100%;
+  height: auto;
+  margin: 12px 0;
+  border-radius: 6px;
+  border: 1px solid var(--stroke);
+}
+.md-content hr { border: none; border-top: 1px solid var(--stroke); margin: 16px 0; }
+.md-content strong { color: var(--text); font-weight: 600; }
+
+/* 对照视图 */
+.bi-block {
+  border: 1px solid var(--stroke);
+  border-radius: 6px;
+  margin-bottom: 16px;
+  overflow: hidden;
+  background: var(--glass);
+}
+.bi-label {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 6px 12px;
+  background: var(--glass-2);
+  color: var(--text-2);
+  border-bottom: 1px solid var(--stroke);
+}
+.bi-col { padding: 12px 16px; }
+.bi-original { border-bottom: 1px solid var(--stroke); }
+
+/* 降级提示 */
+.fallback-notice {
+  border-radius: 6px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  font-size: 13px;
+  background: var(--glass);
+  border: 1px solid var(--stroke);
+  border-left: 3px solid var(--amber);
+  color: var(--text-2);
+}
+.fallback-notice strong { color: var(--text); }
+.fallback-notice code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--glass-2);
+}
+
+/* 加载提示 */
+.loading-text { font-size: 13px; color: var(--text-3); }
+
+/* ==================== 区域标题 ==================== */
+
+.sec-title {
+  font-family: var(--font-display);
+  font-size: 26px;
+  font-weight: 600;
+  color: var(--text);
+  position: relative;
+  padding-bottom: 10px;
+}
+.sec-title::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 42px;
+  height: 3px;
+  background: var(--accent);
+}
+
+/* ==================== 噪点纹理 — 已废弃（瑞士风无噪点） ==================== */
+
+/* ==================== sonner Toast 瑞士风适配 ==================== */
+
+[data-sonner-toaster] {
+  --normal-bg: var(--glass-2);
+  --normal-border: var(--stroke-hi);
+  --normal-text: var(--text);
+  --border-radius: 6px;
+}
+[data-sonner-toast] {
+  border: 1px solid var(--stroke-hi);
+}
+
+/* sonner 语义类型：左侧语义色条 + 语义图标色
+   （去 richColors 后手动区分成功/失败，保持瑞士风统一） */
+[data-sonner-toast][data-type="success"] {
+  border-left: 3px solid #2f9e6e;
+}
+[data-sonner-toast][data-type="success"] [data-icon] {
+  color: #34d399;
+}
+[data-sonner-toast][data-type="error"] {
+  border-left: 3px solid #e0524a;
+}
+[data-sonner-toast][data-type="error"] [data-icon] {
+  color: #e0524a;
+}
+[data-sonner-toast][data-type="warning"] {
+  border-left: 3px solid #d97706;
+}
+[data-sonner-toast][data-type="warning"] [data-icon] {
+  color: #d97706;
+}
+[data-sonner-toast][data-type="info"] {
+  border-left: 3px solid var(--accent);
+}
+[data-sonner-toast][data-type="info"] [data-icon] {
+  color: var(--accent);
+}
+
+/* AI 创作引导文案淡入（UI 反馈 2026-08-05 条目 5） */
+@keyframes fade-in-soft {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-fade-in {
+  animation: fade-in-soft 0.6s ease-out both;
+}
+
+/* ==================== PLAN-12 ⑤：代码编辑器语法高亮 ====================
+   轻量 tokenizer 的着色类。用主题变量 + 中等饱和固定色，明暗两套主题都可读。 */
+.tok-c { color: var(--color-text-tertiary); font-style: italic; }  /* 注释 */
+.tok-s { color: #b4691e; }                                        /* 字符串 */
+[data-theme="dark"] .tok-s { color: #e0a458; }
+.tok-k { color: var(--color-primary); font-weight: 600; }         /* 关键字 */
+.tok-n { color: #5b74b8; }                                        /* 数字 */
+[data-theme="dark"] .tok-n { color: #93a7e8; }
+.tok-h { color: var(--color-primary); font-weight: 700; }         /* md 标题 */

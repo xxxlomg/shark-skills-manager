@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="shark skills 技能鲨 — 浏览、搜索、查看中英对照技能文档" />
+    <title>shark skills · 技能鲨</title>
+    <!-- 主题色预设早设：bundle 加载前命中 [data-accent] 选择器，避免首帧闪默认色 -->
+    <script>
+      (function () {
+        try {
+          var a = localStorage.getItem("skillbox-accent");
+          if (a) document.documentElement.setAttribute("data-accent", a);
+        } catch (e) {}
+      })();
+    </script>
+    <!-- 零字体请求：系统字体栈（见 src/index.css --font-* tokens）。
+         历史教训：Google Fonts 外链是渲染阻塞 stylesheet，国内常挂起
+         10-30s；规范规定 module script 执行需等 pending stylesheet，
+         连坐 env.mjs 等全部模块请求，表现为启动卡死。 -->
+    <style>
+      /* ===== 启动蒙版（内联，先于 JS bundle 生效，消除白屏） ===== */
+      #app-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+        background: #faf8f4;
+        transition: opacity 0.5s ease, transform 0.5s ease, filter 0.5s ease;
+        font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui,
+          -apple-system, Roboto, sans-serif;
+      }
+      #app-splash.sp-hide {
+        opacity: 0;
+        transform: scale(1.04);
+        filter: blur(8px);
+        pointer-events: none;
+      }
+      .sp-content {
+        position: relative;
+        z-index: 2;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+      .sp-logo-wrap {
+        position: relative;
+        width: 132px;
+      }
+      .sp-logo-wrap img { display: block; width: 100%; height: auto; }
+      .sp-title {
+        margin-top: 22px;
+        font-size: 30px;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        color: #1a1714;
+      }
+      .sp-bar {
+        margin-top: 22px;
+        width: 132px;
+        height: 3px;
+        border-radius: 9999px;
+        background: #e7e1d8;
+        overflow: hidden;
+      }
+      .sp-bar-fill {
+        width: 42%;
+        height: 100%;
+        border-radius: 9999px;
+        background: #ff6a45;
+        animation: sp-bar 1.15s ease-in-out infinite;
+      }
+      @keyframes sp-bar {
+        0% { transform: translateX(-130%); }
+        100% { transform: translateX(330%); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .sp-bar-fill { animation: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <!-- 启动蒙版：JS bundle 加载前即渲染 -->
+    <div id="app-splash">
+      <div class="sp-content">
+        <div class="sp-logo-wrap">
+          <!-- shark skills mark：鳍+浪（瑞士风） -->
+          <img src="/src/assets/brand/fin-light.png" alt="" />
+        </div>
+        <div class="sp-title">shark skills</div>
+        <div class="sp-bar"><div class="sp-bar-fill"></div></div>
+      </div>
+    </div>
+
+    <script>
+      // 蒙版退场：保证最小停留 700ms，淡出后移除节点
+      (function () {
+        var el = document.getElementById("app-splash");
+        if (!el) return;
+        var born = performance.now();
+        var MIN = 700;
+        var hiding = false;
+        function remove() { if (el && el.parentNode) el.parentNode.removeChild(el); }
+        function doHide() {
+          if (hiding) return;
+          hiding = true;
+          el.classList.add("sp-hide");
+          var done = false;
+          function fin() { if (done) return; done = true; remove(); }
+          el.addEventListener("transitionend", fin, { once: true });
+          setTimeout(fin, 700);
+        }
+        window.hideSplash = function () {
+          var wait = MIN - (performance.now() - born);
+          if (wait > 0) setTimeout(doHide, wait); else doHide();
+        };
+      })();
+    </script>
+
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

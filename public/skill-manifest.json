@@ -1,0 +1,34 @@
+{
+  "schema_version": "skills-shark.v1",
+  "generated_at": "2026-07-31T15:35:04+0800",
+  "skills": [
+    {
+      "id": "QA_source_index",
+      "name": "QA_source_index",
+      "name_zh": "文档源码速查",
+      "category": "开发工具",
+      "source": "qwenpaw",
+      "usage": "回答 QwenPaw 安装/配置/技能/MCP/多Agent/记忆等问题时，按关键词定位官方文档与源码入口，减少盲目搜索",
+      "description": "Maps topics and keywords from user questions to QwenPaw official documentation paths and common source code entry points, reducing blind searching. Intended for the built-in QA Agent to quickly identify which files to read when answering questions about installation, configuration, skills, MCP, multi-agent, memory, CLI, etc.",
+      "description_zh": "将问题关键词映射到 QwenPaw 官方文档路径与常见源码入口，减少盲目搜索。内置 QA Agent 用它快速定位该读哪些文件。",
+      "tags": ["QwenPaw", "文档", "源码", "速查", "QA"],
+      "emoji": "🗂️",
+      "original_file": "skills/QA_source_index/SKILL.md",
+      "translated_file": "translated/QA_source_index/SKILL.md"
+    },
+    {
+      "id": "file_reader",
+      "name": "file_reader",
+      "name_zh": "文本文件读取",
+      "category": "文件处理",
+      "source": "qwenpaw",
+      "usage": "用户要求读取或总结本地文本文件时使用（.txt/.md/.json/.log 等）；PDF/Office/图片由其他 skill 处理",
+      "description": "Read and summarize text-based file types only. Prefer read_file for text formats; use execute_shell_command for type detection when needed. PDF/Office/images/archives are handled by other skills.",
+      "description_zh": "读取并总结纯文本类文件（仅限文本格式），优先用 read_file；需要时用 execute_shell_command 探测类型。PDF/Office/图片/压缩包由其他 skill 负责。",
+      "tags": ["文件", "读取", "文本", "总结"],
+      "emoji": "📄",
+      "original_file": "skills/file_reader/SKILL.md",
+      "translated_file": "translated/file_reader/SKILL.md"
+    }
+  ]
+}

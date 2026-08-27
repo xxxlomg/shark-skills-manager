@@ -1,0 +1,32 @@
+[package]
+name = "skills-shark"
+version = "0.2.2"
+description = "SkillsShark - 多路径 Skills 管理与翻译工具"
+authors = ["you"]
+edition = "2021"
+
+[lib]
+name = "skills_shark_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+regex = "1"
+walkdir = "2"
+chrono = { version = "0.4", features = ["serde"] }
+dirs = "6"
+zip = "8.6.0"
+tempfile = "3.27.0"
+tauri-plugin-dialog = "2.7.2"
+ureq = "3.3.0"
+junction = "2.0.0"
+trash = "5.2.6"
+serde_yaml_ng = "0.10.0"
+tokio = { version = "1", features = ["process", "time", "rt", "macros"] }

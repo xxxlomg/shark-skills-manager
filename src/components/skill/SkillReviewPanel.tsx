@@ -5,8 +5,6 @@ import {
   Info,
   Lightbulb,
   Loader2,
-  ShieldCheck,
-  StopCircle,
   Wrench,
   XCircle,
 } from "lucide-react";
@@ -16,9 +14,9 @@ import { cn } from "@/lib/utils";
 import type { SkillReviewResult, ReviewIssue } from "@/lib/authoring-api";
 
 /**
- * 智能审查面板（shark-skill-creator 规范，全自动化）。
- * 展示 AI 审查结果：总分、各维度评分、问题列表（含改进建议）、优点、总结。
- * 支持：取消审查、一键修复、报告元数据展示。
+ * 智能审查结果面板（shark-skill-creator 规范，全自动化）。
+ * 只负责「有结果 / 出错」两种态：总分、各维度评分、问题列表（含改进建议）、优点、总结，
+ * 以及一键修复入口。空态与进行中由 SkillReviewBrief（须知卡）统一承载，不在此重复。
  */
 
 export interface ReviewReportMeta {
@@ -30,12 +28,10 @@ export interface ReviewReportMeta {
 
 interface SkillReviewPanelProps {
   review: SkillReviewResult | null;
-  loading: boolean;
   error?: string | null;
   /** 报告元数据（持久化后回显） */
   reportMeta?: ReviewReportMeta | null;
   onRetry?: () => void;
-  onCancel?: () => void;
   onFix?: () => void;
   fixing?: boolean;
 }
@@ -85,36 +81,12 @@ function fmtTime(iso: string): string {
 
 export function SkillReviewPanel({
   review,
-  loading,
   error,
   reportMeta,
   onRetry,
-  onCancel,
   onFix,
   fixing,
 }: SkillReviewPanelProps) {
-  if (loading) {
-    return (
-      <div className="flex min-h-48 flex-col items-center justify-center gap-3 text-center">
-        <Loader2 className="h-6 w-6 animate-spin text-primary" />
-        <p className="text-sm text-text-secondary">正在基于 shark-skill-creator 规范进行智能审查…</p>
-        <p className="text-[11px] text-text-tertiary">分析结构、内容完整性与逻辑质量</p>
-        {onCancel && (
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="mt-1 gap-1.5 !border-red-400/60 !text-red-500 hover:!bg-red-500/10"
-            onClick={onCancel}
-          >
-            <StopCircle className="h-3.5 w-3.5" />
-            取消审查
-          </Button>
-        )}
-      </div>
-    );
-  }
-
   if (error) {
     return (
       <div className="grid min-h-48 place-items-center gap-3 text-center">
@@ -129,17 +101,9 @@ export function SkillReviewPanel({
     );
   }
 
-  if (!review) {
-    return (
-      <div className="grid min-h-48 place-items-center gap-3 text-center">
-        <ShieldCheck className="h-6 w-6 text-text-tertiary" />
-        <p className="text-sm text-text-secondary">点击「开始审查」进行自动化分析</p>
-        <p className="text-[11px] text-text-tertiary">
-          基于 shark-skill-creator 规范，从 8 个维度自动评估技能质量
-        </p>
-      </div>
-    );
-  }
+  // 无报告空态由 SkillReviewBrief（审查须知卡）承载，包含唯一「开始审查」入口；
+  // 进行中同理，所以本组件只处理结果与错误。
+  if (!review) return null;
 
   const hasIssues = review.issues.length > 0;
 

@@ -6,7 +6,7 @@
  * 实现要点：pre 与 textarea 字体度量完全一致（同 font/size/leading/padding、
  * white-space:pre、wrap=off），textarea 文字透明、光标可见，高亮由 pre 呈现。
  */
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 
 export type CodeLang = "py" | "sh" | "js" | "md" | "txt";
 
@@ -87,14 +87,18 @@ export function CodeEditor({
   onChange,
   lang,
   readOnly = false,
+  autoScroll = false,
 }: {
   value: string;
   onChange: (v: string) => void;
   lang: CodeLang;
   readOnly?: boolean;
+  /** 流式跟随：value 变化时自动平滑滚动到底部（终端打字机体验） */
+  autoScroll?: boolean;
 }) {
   const preRef = useRef<HTMLPreElement>(null);
   const gutterRef = useRef<HTMLDivElement>(null);
+  const taRef = useRef<HTMLTextAreaElement>(null);
 
   const html = useMemo(() => highlight(value, lang), [value, lang]);
   const lineCount = useMemo(() => value.split("\n").length, [value]);
@@ -109,6 +113,29 @@ export function CodeEditor({
       gutterRef.current.style.transform = `translateY(${-ta.scrollTop}px)`;
     }
   };
+
+  // 流式跟随（附件生成直播）：内容增量时平滑滚到底部
+  const rafIdRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!autoScroll) return;
+    if (rafIdRef.current) cancelAnimationFrame(rafIdRef.current);
+    rafIdRef.current = requestAnimationFrame(() => {
+      const ta = taRef.current;
+      if (!ta) return;
+      ta.scrollTop = ta.scrollHeight;
+      if (preRef.current) {
+        preRef.current.scrollTop = ta.scrollTop;
+        preRef.current.scrollLeft = ta.scrollLeft;
+      }
+      if (gutterRef.current) {
+        gutterRef.current.style.transform = `translateY(${-ta.scrollTop}px)`;
+      }
+    });
+  }, [value, autoScroll]);
+
+  useEffect(() => () => {
+    if (rafIdRef.current) cancelAnimationFrame(rafIdRef.current);
+  }, []);
 
   return (
     <div className="flex min-h-0 flex-1 overflow-hidden bg-card font-mono text-sm leading-6">
@@ -135,6 +162,7 @@ export function CodeEditor({
           dangerouslySetInnerHTML={{ __html: html + "\n" }}
         />
         <textarea
+          ref={taRef}
           value={value}
           onChange={(e) => onChange(e.target.value)}
           onScroll={syncScroll}

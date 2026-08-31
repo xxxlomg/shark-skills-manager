@@ -1,4 +1,4 @@
-import { Fragment, useState, useCallback, useMemo, useEffect } from "react";
+import { Fragment, useState, useCallback, useMemo, useEffect, lazy, Suspense, type ReactNode } from "react";
 import { ArrowLeft, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
 import { listen } from "@tauri-apps/api/event";
@@ -13,14 +13,28 @@ import type { StatsData, ToolStat } from "@/components/layout/StatsCard";
 import { NewFolderDialog } from "@/components/layout/NewFolderDialog";
 import { DEFAULT_VIEW, type ViewId } from "@/lib/view-registry";
 import { LinkDialog } from "@/components/hub/LinkDialog";
-import { HubView } from "@/components/hub/HubView";
 import { Footer } from "@/components/layout/Footer";
-import { HomeView } from "@/components/skill/HomeView";
-import { AllSkillsView } from "@/components/skill/AllSkillsView";
-import { CategoryView } from "@/components/skill/CategoryView";
-import { PacksView } from "@/components/skill/PacksView";
+// 视图级懒加载（1MB 单 chunk 拆分）：tab/子视图首次渲染才下载对应 chunk。
+// 首页首屏只需 lib 骨架 + 当前子视图；Packs/Hub/Create 与其余子视图按需加载。
+const HomeView = lazy(() =>
+  import("@/components/skill/HomeView").then((m) => ({ default: m.HomeView })),
+);
+const AllSkillsView = lazy(() =>
+  import("@/components/skill/AllSkillsView").then((m) => ({ default: m.AllSkillsView })),
+);
+const CategoryView = lazy(() =>
+  import("@/components/skill/CategoryView").then((m) => ({ default: m.CategoryView })),
+);
+const PacksView = lazy(() =>
+  import("@/components/skill/PacksView").then((m) => ({ default: m.PacksView })),
+);
+const HubView = lazy(() =>
+  import("@/components/hub/HubView").then((m) => ({ default: m.HubView })),
+);
+const CreationView = lazy(() =>
+  import("@/components/skill/CreationView").then((m) => ({ default: m.CreationView })),
+);
 import { PackCreateDialog } from "@/components/skill/PackCreateDialog";
-import { CreationView } from "@/components/skill/CreationView";
 import { AuthoringWorkbench } from "@/components/skill/AuthoringWorkbench";
 import { DupWorkbench } from "@/components/skill/DupWorkbench";
 import { MergeWorkbench } from "@/components/skill/MergeWorkbench";
@@ -617,36 +631,37 @@ function App() {
   const sidebarShown = navMode === "sidebar";
 
   // ===== 视图分发（顶栏 / 侧栏两种布局共用，抽成变量避免重复）=====
-  const viewDispatch = (
-    <div key={tab} className="animate-view-enter">
-      {tab === "packs" ? (
-        <PacksView
-          packs={packs}
-          onCreatePack={handleCreatePack}
-          onImportPack={handleImportPack}
-          onRepoImport={handleRepoImport}
-          onPackAction={handlePackAction}
-          layout={layout}
-          onLayoutChange={handleLayoutChange}
-          publishDisabledReason={publishDisabledReason}
-          publishingId={publishingId}
-        />
-      ) : tab === "hub" ? (
-        /* Hub 引用平铺管理页（B5 恢复 Tab；引用数据独立于技能扫描，不受 error/loading 阻塞） */
-        <HubView
-          skills={skills}
-          onSkillsRefresh={refresh}
-          refreshToken={hubToken}
-        />
-      ) : tab === "create" ? (
-        <CreationView
-          skills={skills}
-          refresh={refresh}
-          layout={layout}
-          onLayoutChange={handleLayoutChange}
-          onOpenWorkbench={openWorkbench}
-        />
-      ) : error ? (
+  // PLAN-06 §7.6 数据驱动：按 view-registry 的 tab 查 RENDERERS 表渲染，
+  // 语义与 TabNav/Sidebar 注册表一致；lib 分支内部再做 error/loading/子视图分流。
+  const renderers: Record<ViewId, () => ReactNode> = {
+    packs: () => (
+      <PacksView
+        packs={packs}
+        onCreatePack={handleCreatePack}
+        onImportPack={handleImportPack}
+        onRepoImport={handleRepoImport}
+        onPackAction={handlePackAction}
+        layout={layout}
+        onLayoutChange={handleLayoutChange}
+        publishDisabledReason={publishDisabledReason}
+        publishingId={publishingId}
+      />
+    ),
+    hub: () => (
+      /* Hub 引用平铺管理页（B5 恢复 Tab；引用数据独立于技能扫描，不受 error/loading 阻塞） */
+      <HubView skills={skills} onSkillsRefresh={refresh} refreshToken={hubToken} />
+    ),
+    create: () => (
+      <CreationView
+        skills={skills}
+        refresh={refresh}
+        layout={layout}
+        onLayoutChange={handleLayoutChange}
+        onOpenWorkbench={openWorkbench}
+      />
+    ),
+    lib: () =>
+      error ? (
         <EmptyState hasError errorMessage={error} />
       ) : loading ? (
         <div className="grid gap-5 pt-8 sm:grid-cols-2 lg:grid-cols-3">
@@ -712,7 +727,25 @@ function App() {
           onPackSelected={handlePackSelected}
           onSkillsRefresh={handleLinked}
         />
-      )}
+      ),
+  };
+  const viewDispatch = (
+    <div key={tab} className="animate-view-enter">
+      <Suspense
+        fallback={
+          <div className="grid gap-5 pt-8 sm:grid-cols-2 lg:grid-cols-3">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="glass-card p-6">
+                <div className="mb-3 h-1 w-full animate-pulse rounded bg-glass-2" />
+                <div className="mb-2 h-5 w-3/4 animate-pulse rounded bg-glass-2" />
+                <div className="mb-4 h-3 w-1/2 animate-pulse rounded bg-glass-2" />
+              </div>
+            ))}
+          </div>
+        }
+      >
+        {renderers[tab]?.() ?? null}
+      </Suspense>
     </div>
   );
 
@@ -810,7 +843,6 @@ function App() {
             <AuthoringWorkbench
               key={`${wbSkill?.id ?? "new"}:${wbInitialLocation ?? ""}`}
               skill={wbSkill}
-              skills={skills}
               initialLocation={wbInitialLocation}
               refresh={refresh}
               onOpenSettings={() => setSettingsOpen(true)}

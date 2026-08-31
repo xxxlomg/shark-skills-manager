@@ -4,9 +4,11 @@
  * 流式期间「应用到正文」禁用，流结束后才允许应用。
  * prompt 已抽到 @/lib/ai/prompts/authoring（统一管理）；LLM 调用走 @/lib/ai。
  */
-import { callLLMStream, requireLLMConfig } from "@/lib/ai";
+import { callLLMStream, callLLMChat, requireLLMConfig } from "@/lib/ai";
 import { prompts } from "@/lib/ai";
 import { isMockMode } from "@/mock";
+import { skillCreatorInfo } from "@/lib/api";
+import type { ChatMsg } from "@/lib/session-store";
 import type { WbDraft } from "./wb-draft";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -30,8 +32,26 @@ description: 演示创作工作台 AI 创作链路。当需要验证 AI 生成�
 `;
 
 /**
+ * 内置规范骨架缓存（create 类 prompt 的注入源；mock 模式也走 summary）。
+ * 渐进披露：只注入压缩骨架，正文用到的 references 写作细则由附件生成阶段补。
+ */
+let creatorSummaryCache: string | null = null;
+
+async function loadCreatorSummary(): Promise<string> {
+  if (creatorSummaryCache !== null) return creatorSummaryCache;
+  try {
+    const info = await skillCreatorInfo();
+    creatorSummaryCache = info?.summary?.trim() || "";
+  } catch {
+    creatorSummaryCache = "";
+  }
+  return creatorSummaryCache;
+}
+
+/**
  * W3 流式生成：直出 SKILL.md 原文。mock 模拟流式。
  * 返回全文与 finishReason（length = 截断，UI 提示重试）。
+ * 注入内置规范骨架（shark-skill-creator），产出符合规范结构的正文。
  */
 export async function generateSkillMdStream(
   topic: string,
@@ -53,8 +73,9 @@ export async function generateSkillMdStream(
     return { text: MOCK_SKILL_MD, finishReason: "stop" };
   }
   const config = requireLLMConfig();
+  const guide = await loadCreatorSummary();
   return callLLMStream(
-    prompts.buildAuthoringPrompt(topic, draft),
+    prompts.buildAuthoringPrompt(topic, draft, guide),
     config.apiKey,
     config.baseUrl,
     config.model,
@@ -221,8 +242,9 @@ export async function generateFileAssistStream(
     return { text: mock, finishReason: "stop" };
   }
   const config = requireLLMConfig();
+  const guide = await loadCreatorSummary();
   return callLLMStream(
-    prompts.buildFileAssistPrompt(params),
+    prompts.buildFileAssistPrompt(params, guide),
     config.apiKey,
     config.baseUrl,
     config.model,
@@ -297,8 +319,9 @@ export async function reviewSkillStream(
     return { text: full, finishReason: "stop" };
   }
   const config = requireLLMConfig();
+  const guide = await loadCreatorSummary();
   return callLLMStream(
-    prompts.buildSkillReviewPrompt(skillName, skillContent, validationIssues),
+    prompts.buildSkillReviewPrompt(skillName, skillContent, validationIssues, guide),
     config.apiKey,
     config.baseUrl,
     config.model,
@@ -386,8 +409,9 @@ ${skillDescription}
     return { text: mock, finishReason: "stop" };
   }
   const config = requireLLMConfig();
+  const guide = await loadCreatorSummary();
   return callLLMStream(
-    prompts.buildSkillFixPrompt(skillName, skillDescription, currentBody, issues),
+    prompts.buildSkillFixPrompt(skillName, skillDescription, currentBody, issues, guide),
     config.apiKey,
     config.baseUrl,
     config.model,
@@ -442,10 +466,31 @@ export async function interviewNextQuestion(
  * - ask：动态生成一个紧扣用户描述的问题；
  * - done：信息充分。
  *
- * 健壮性：LLM 未配置或调用失败（如 401 鉴权）时，自动降级到本地动态引导
- * （仍会读取后端内置规范），并记住失败避免重复发起失败请求。
+ * 降级策略（防「模板感」回潮）：
+ * - 连续失败计数达到 AGENT_FAIL_THRESHOLD 才进入本地引导，成功一次即清零；
+ * - 每场访谈开始调用 resetInterviewAgentState() 重置，杜绝跨会话永久降级；
+ * - 降级后通过返回的 degraded 标志让 UI 明示「已切换本地引导」。
  */
-let agentLlmFailed = false;
+let agentFailStreak = 0;
+const AGENT_FAIL_THRESHOLD = 2;
+
+/** 重置失败计数（每场访谈挂载时调用） */
+export function resetInterviewAgentState(): void {
+  agentFailStreak = 0;
+}
+
+/** 当前是否处于连续失败降级状态（供 UI 提示） */
+export function isInterviewAgentDegraded(): boolean {
+  return agentFailStreak >= AGENT_FAIL_THRESHOLD;
+}
+
+export interface AgentTurnResult {
+  action: import("@/lib/interview-engine").AgentAction;
+  /** 本轮是否走了本地降级引导（供 UI 明示） */
+  degraded: boolean;
+  /** 本轮思考过程全文（持久化到会话事件的 reasoning 附注；不持久化到草稿） */
+  thinking?: string;
+}
 
 export async function interviewAgentTurn(opts: {
   description: string;
@@ -458,37 +503,50 @@ export async function interviewAgentTurn(opts: {
   turnCount: number;
   duplicateHint?: string;
   abortSignal?: AbortSignal;
-}): Promise<import("@/lib/interview-engine").AgentAction> {
-  // mock 或 LLM 已确认不可用 → 本地动态引导
-  if (isMockMode() || agentLlmFailed) {
-    return mockAgentTurn(opts);
+  /** 思考过程流（访谈对话可视化；不持久化） */
+  onThinking?: (d: string) => void;
+  /** 会话真实消息数组（T4：历史以结构化多轮传入，不再字符串拼接） */
+  llmMessages?: ChatMsg[];
+}): Promise<AgentTurnResult> {
+  // mock 或已确认连续失败 → 本地动态引导
+  if (isMockMode()) {
+    return { action: mockAgentTurn(opts), degraded: false };
+  }
+  if (agentFailStreak >= AGENT_FAIL_THRESHOLD) {
+    return { action: mockAgentTurn(opts), degraded: true };
   }
   // 未配置 key → 直接本地引导（不发起请求，避免 401）
   let config;
   try {
     config = requireLLMConfig();
   } catch {
-    agentLlmFailed = true;
-    return mockAgentTurn(opts);
+    return { action: mockAgentTurn(opts), degraded: false };
   }
   try {
-    const { text } = await callLLMStream(
-      prompts.buildInterviewAgentPrompt(opts),
-      config.apiKey,
-      config.baseUrl,
-      config.model,
-      () => {},
-      opts.abortSignal
-    );
+    const { text, thinking } = await callLLMChat({
+      system: opts.loadedKnowledge || undefined,
+      messages: [
+        ...(opts.llmMessages ?? []),
+        { role: "user", content: prompts.buildInterviewAgentPrompt(opts) },
+      ],
+      apiKey: config.apiKey,
+      baseUrl: config.baseUrl,
+      model: config.model,
+      onDelta: () => {},
+      externalSignal: opts.abortSignal,
+      onThinking: opts.onThinking,
+    });
     const parsed = JSON.parse(text) as import("@/lib/interview-engine").AgentAction;
     if (!parsed.action) throw new Error("AI 访谈响应格式异常");
-    return parsed;
+    agentFailStreak = 0; // 成功即清零
+    return { action: parsed, degraded: false, thinking };
   } catch (e) {
     // 用户主动取消 → 向上抛，不降级
     if (e instanceof DOMException && e.name === "AbortError") throw e;
-    // 其他失败（401/网络/格式）→ 记住并降级到本地引导
-    agentLlmFailed = true;
-    return mockAgentTurn(opts);
+    // 其他失败（401/网络/格式）→ 计数；达到阈值才标记降级
+    agentFailStreak++;
+    const degraded = agentFailStreak >= AGENT_FAIL_THRESHOLD;
+    return { action: mockAgentTurn(opts), degraded };
   }
 }
 
@@ -555,6 +613,123 @@ function mockAgentTurn(opts: {
 }
 
 /**
+ * B3 附件补全流式：按 SKILL.md 正文声明的引用逐文件生成「真实可用」内容。
+ * 与 AI 帮写（用户想法驱动）互补：本函数由附件提案批量调用。
+ */
+export async function generateAttachmentDraftStream(
+  params: {
+    fileRel: string;
+    skillName: string;
+    skillDescription: string;
+    skillBody: string;
+    /** 会话历史消息（T4：附件生成携带完整上下文链） */
+    sessionMessages?: ChatMsg[];
+  },
+  onDelta: (t: string) => void,
+  abortSignal?: AbortSignal
+): Promise<{ text: string; finishReason: string | null }> {
+  if (isMockMode()) {
+    const isScript = /\.(py|sh|bash|js|mjs)$/i.test(params.fileRel);
+    const mock = isScript
+      ? `#!/usr/bin/env python3
+"""${params.skillName} 确定性操作（mock）。"""
+import sys
+
+
+def main() -> int:
+    print("ok: ${params.fileRel}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+`
+      : `# ${params.fileRel.split("/").pop()}
+
+> 服务「${params.skillName}」的附件（mock）。
+
+## 要点
+
+- 与技能目标一致、可被正文引用。
+`;
+    const chunks = mock.match(/.{1,10}/gs) ?? [mock];
+    for (const ch of chunks) {
+      if (abortSignal?.aborted) {
+        throw new DOMException("附件生成已取消", "AbortError");
+      }
+      onDelta(ch);
+      await sleep(20);
+    }
+    return { text: mock, finishReason: "stop" };
+  }
+  const config = requireLLMConfig();
+  const guide = await loadCreatorSummary();
+  return callLLMChat({
+    system: guide || undefined,
+    messages: [
+      ...(params.sessionMessages ?? []),
+      {
+        role: "user",
+        content: prompts.buildAttachmentDraftPrompt(
+          { fileRel: params.fileRel, skillName: params.skillName, skillDescription: params.skillDescription, skillBody: params.skillBody },
+        ),
+      },
+    ],
+    apiKey: config.apiKey,
+    baseUrl: config.baseUrl,
+    model: config.model,
+    onDelta,
+    externalSignal: abortSignal,
+  });
+}
+
+/**
+ * B3 解析 SKILL.md 正文中的附件引用（references/...、scripts/...）。
+ * 去重、过滤空段与目录尾斜杠；供附件提案清单使用。
+ */
+export function extractAttachmentRefs(body: string): string[] {
+  const refs = new Set<string>();
+  const re = /(?:references|scripts)\/[A-Za-z0-9][A-Za-z0-9._-]*/g;
+  for (const m of body.matchAll(re)) {
+    const p = m[0];
+    if (!p.endsWith("/")) refs.add(p);
+  }
+  return [...refs];
+}
+
+/**
+ * C6：AI 标题总结——生成完成后给技能一个精准的 hyphen-case 名。
+ * 失败或格式非法时抛错（调用方回退本地生成名）。
+ */
+export async function summarizeSkillTitle(
+  description: string,
+  body: string,
+  abortSignal?: AbortSignal
+): Promise<string> {
+  if (isMockMode()) {
+    throw new Error("MOCK_USE_LOCAL_NAME");
+  }
+  const config = requireLLMConfig();
+  const { text } = await callLLMStream(
+    prompts.buildSkillTitlePrompt(description, body),
+    config.apiKey,
+    config.baseUrl,
+    config.model,
+    () => {},
+    abortSignal
+  );
+  const name = text
+    .trim()
+    .split(/[\s\n]+/)[0]
+    .replace(/[^a-z0-9-]/gi, "")
+    .toLowerCase();
+  if (!/^[a-z][a-z0-9-]*$/.test(name) || name.length < 3) {
+    throw new Error("AI 标题格式非法");
+  }
+  return name;
+}
+
+/**
  * PLAN-11 能力 2「续写正文」流式（body-only）。
  * 情况 A（existingBody 空）→ 生成完整正文；情况 B → 顺着续写补齐、不覆盖。
  * 应用逻辑在 AuthoringWorkbench：A 填入 / B 追加。
@@ -565,7 +740,9 @@ export async function continueBodyStream(
   existingBody: string,
   onDelta: (t: string) => void,
   abortSignal?: AbortSignal,
-  additionalContext?: string
+  additionalContext?: string,
+  onThinking?: (d: string) => void,
+  sessionMessages?: ChatMsg[]
 ): Promise<{ text: string; finishReason: string | null }> {
   if (isMockMode()) {
     const mock = existingBody.trim()
@@ -582,12 +759,21 @@ export async function continueBodyStream(
     return { text: mock, finishReason: "stop" };
   }
   const config = requireLLMConfig();
-  return callLLMStream(
-    prompts.buildContinueBodyPrompt(description, existingBody, additionalContext),
-    config.apiKey,
-    config.baseUrl,
-    config.model,
+  const guide = await loadCreatorSummary();
+  return callLLMChat({
+    system: guide || undefined,
+    messages: [
+      ...(sessionMessages ?? []),
+      {
+        role: "user",
+        content: prompts.buildContinueBodyPrompt(description, existingBody, additionalContext),
+      },
+    ],
+    apiKey: config.apiKey,
+    baseUrl: config.baseUrl,
+    model: config.model,
     onDelta,
-    abortSignal
-  );
+    externalSignal: abortSignal,
+    onThinking,
+  });
 }

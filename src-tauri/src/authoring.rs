@@ -251,6 +251,8 @@ pub(crate) fn creator_dir() -> PathBuf {
 // ---------------------------------------------------------------------------
 mod embedded_creator {
     pub const SKILL_MD: &str = include_str!("../builtin/shark-skill-creator/SKILL.md");
+    /// 压缩骨架（面向创作 AI 的首轮知识库，全文另存 SKILL.md）
+    pub const SUMMARY: &str = include_str!("../builtin/shark-skill-creator/SUMMARY.md");
     /// (rel_path, 全文)——references/
     pub const REFERENCES: &[(&str, &str)] = &[
         ("references/common-mistakes.md", include_str!("../builtin/shark-skill-creator/references/common-mistakes.md")),
@@ -259,6 +261,15 @@ mod embedded_creator {
         ("references/progressive-disclosure.md", include_str!("../builtin/shark-skill-creator/references/progressive-disclosure.md")),
         ("references/skill-specification.md", include_str!("../builtin/shark-skill-creator/references/skill-specification.md")),
         ("references/skill-state-model.md", include_str!("../builtin/shark-skill-creator/references/skill-state-model.md")),
+    ];
+    /// (rel_path, 一句话用途)——渐进披露索引用，供 AI 决定是否读取全文
+    pub const REFERENCE_PURPOSES: &[(&str, &str)] = &[
+        ("references/common-mistakes.md", "常见误区速查与规避方法"),
+        ("references/evaluation-and-quality.md", "评测方法与质量维度"),
+        ("references/interview-protocol.md", "对话六原则详解与各阶段提问话术"),
+        ("references/progressive-disclosure.md", "SKILL.md/references/scripts/assets 分工细则"),
+        ("references/skill-specification.md", "14 节完整 Skill 规范模板"),
+        ("references/skill-state-model.md", "状态机设计与结构化数据模型"),
     ];
     /// (rel_path, 全文)——scripts/
     pub const SCRIPTS: &[(&str, &str)] = &[
@@ -329,9 +340,15 @@ pub fn skill_creator_info() -> Option<serde_json::Value> {
     let references: Vec<serde_json::Value> = embedded_creator::REFERENCES
         .iter()
         .map(|(rel, content)| {
+            let purpose = embedded_creator::REFERENCE_PURPOSES
+                .iter()
+                .find(|(p, _)| *p == *rel)
+                .map(|(_, pur)| *pur)
+                .unwrap_or("");
             serde_json::json!({
                 "rel_path": rel,
                 "title": embedded_creator::title(content),
+                "purpose": purpose,
                 "size": content.len() as u64,
             })
         })
@@ -349,6 +366,7 @@ pub fn skill_creator_info() -> Option<serde_json::Value> {
     serde_json::json!({
         "name": "shark-skill-creator",
         "description": description,
+        "summary": embedded_creator::SUMMARY,
         "skill_md": skill_md,
         "references": references,
         "scripts": scripts,

@@ -44,6 +44,14 @@ import {
 } from "@/lib/api";
 import { generateFileAssistStream } from "@/lib/authoring-api";
 import { CodeEditor, langOf } from "./CodeEditor";
+import {
+  buildVirtualTree,
+  isBinaryName,
+  refTemplate,
+  STANDARD_DIRS,
+  templatesFor,
+} from "@/lib/file-tree-utils";
+
 
 /**
  * W4 + PLAN-11 阶段 3 + PLAN-12：附带资源文件树（scripts/references/assets 等）。
@@ -63,144 +71,15 @@ interface FileTreeProps {
    * FileTree 会在内存中渲染这些文件的结构树与内容预览，无需等待保存。
    */
   virtualFiles?: Array<{ path: string; content: string }>;
-}
-
-/** 由扁平路径列表构建嵌套 FileNode 树（用于虚拟附件预览）。 */
-function buildVirtualTree(files: Array<{ path: string }>): FileNode[] {
-  const root: FileNode[] = [];
-  const findChild = (list: FileNode[], name: string) => list.find((n) => n.name === name);
-  for (const f of files) {
-    const parts = f.path.split("/").filter(Boolean);
-    let level = root;
-    let acc = "";
-    for (let i = 0; i < parts.length; i++) {
-      acc = acc ? `${acc}/${parts[i]}` : parts[i];
-      const isLast = i === parts.length - 1;
-      let node = findChild(level, parts[i]);
-      if (!node) {
-        node = { rel: acc, name: parts[i], is_dir: !isLast, children: [] };
-        level.push(node);
-      }
-      if (!isLast) level = node.children;
-    }
-  }
-  return root;
-}
-
-/** 3.3 标准目录：选项 + 一句话用途说明（规范性靠引导，不靠拦截）。 */
-const STANDARD_DIRS: { dir: string; hint: string }[] = [
-  { dir: "scripts", hint: "可执行脚本——模型运行它来完成动作（.py / .sh / .js）" },
-  { dir: "references", hint: "参考文档——模型按需查阅的详细资料（.md）" },
-  { dir: "assets", hint: "静态资源——模型不直接读取（图片 / 数据等）" },
-  { dir: "templates", hint: "模板文件——进阶，供模型套用生成（可选）" },
-  { dir: "examples", hint: "示例——进阶，演示用法（可选）" },
-];
-
-/** PLAN-12 ③：starter 模板（按目录/扩展名），让小白有起点可改。 */
-interface StarterTpl {
-  label: string;
-  content: string;
-}
-const TPL_PY: StarterTpl = {
-  label: "Python 脚本骨架",
-  content: `#!/usr/bin/env python3
-"""一句话说明这个脚本做什么。"""
-import sys
-
-
-def main() -> int:
-    # TODO: 在这里实现你的逻辑
-    print("hello from script")
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
-`,
-};
-const TPL_SH: StarterTpl = {
-  label: "Shell 脚本骨架",
-  content: `#!/usr/bin/env bash
-# 一句话说明这个脚本做什么。
-set -euo pipefail
-
-# TODO: 在这里实现你的逻辑
-echo "hello from script"
-`,
-};
-const TPL_JS: StarterTpl = {
-  label: "Node.js 脚本骨架",
-  content: `#!/usr/bin/env node
-// 一句话说明这个脚本做什么。
-"use strict";
-
-function main() {
-  // TODO: 在这里实现你的逻辑
-  console.log("hello from script");
-}
-
-main();
-`,
-};
-const TPL_MD: StarterTpl = {
-  label: "参考文档结构",
-  content: `# 标题
-
-> 一句话说明这份文档的用途。
-
-## 要点
-
-- 要点一
-- 要点二
-
-## 示例
-
-\`\`\`
-示例内容
-\`\`\`
-`,
-};
-
-/** 按文件路径给出适配的模板列表。 */
-function templatesFor(rel: string): StarterTpl[] {
-  const top = rel.split("/")[0];
-  const ext = (rel.split(".").pop() ?? "").toLowerCase();
-  if (top === "scripts" || ["py", "sh", "bash", "js", "mjs"].includes(ext)) {
-    return [TPL_PY, TPL_SH, TPL_JS];
-  }
-  return [TPL_MD];
-}
-
-/** 3.5 二进制判定（按扩展名）：命中即只读，不做在线编辑。 */
-const BIN_EXT = new Set([
-  ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".avif",
-  ".pdf", ".zip", ".tar", ".gz", ".rar", ".7z",
-  ".bin", ".exe", ".dll", ".so", ".dylib",
-  ".mp3", ".mp4", ".wav", ".avi", ".mov", ".mkv",
-  ".woff", ".woff2", ".ttf", ".otf", ".eot",
-  ".pyc", ".class", ".wasm",
-]);
-function isBinaryName(name: string): boolean {
-  const i = name.lastIndexOf(".");
-  if (i < 0) return false;
-  return BIN_EXT.has(name.slice(i).toLowerCase());
-}
-
-/** 3.6 引用文案模板：按顶层目录给出起点，用户可在弹窗里手改。 */
-function refTemplate(rel: string): string {
-  const top = rel.split("/")[0];
-  switch (top) {
-    case "references":
-      return `参考 ${rel} 获取详细说明`;
-    case "scripts":
-      return `运行 \`${rel}\` 以执行相关操作`;
-    case "templates":
-      return `套用模板 ${rel}`;
-    case "examples":
-      return `示例参见 ${rel}`;
-    default:
-      return `参考 ${rel}`;
-  }
+  /**
+   * 受控聚焦（附件生成直播）：外部指定生成中的文件路径时，
+   * 自动展开父目录链并打开该文件，内容随 virtualFiles 流式刷新。
+   */
+  autoOpenPath?: string | null;
+  /** 编辑器内容变更上报（保存统一由右上角「保存」触发，无局部保存按钮） */
+  onFileContentChange?: (rel: string, content: string) => void;
+  /** 高亮路径（审查/修复进行中）：对应节点行加轮廓与底色，展示 AI 正在处理哪个文件 */
+  highlightPath?: string | null;
 }
 
 function NodeRow({
@@ -212,6 +91,7 @@ function NodeRow({
   onView,
   onDelete,
   onInsertRef,
+  highlight,
 }: {
   node: FileNode;
   depth: number;
@@ -221,6 +101,8 @@ function NodeRow({
   onView: (rel: string) => void;
   onDelete: (rel: string) => void;
   onInsertRef: (rel: string) => void;
+  /** 高亮路径（审查/修复进行中）：行加轮廓与底色 */
+  highlight?: boolean;
 }) {
   // PLAN-12 ①：缩进加宽，行更高，字更大
   const pad = { paddingLeft: `${10 + depth * 16}px` };
@@ -266,6 +148,7 @@ function NodeRow({
               onView={onView}
               onDelete={onDelete}
               onInsertRef={onInsertRef}
+              highlight={highlight}
             />
           ))}
       </>
@@ -275,7 +158,9 @@ function NodeRow({
   return (
     <div
       style={pad}
-      className="group flex w-full items-center gap-2 rounded px-2 py-1.5 text-sm text-text-secondary hover:bg-glass-1"
+      className={`group flex w-full items-center gap-2 rounded px-2 py-1.5 text-sm text-text-secondary hover:bg-glass-1 ${
+        highlight ? "bg-primary/10 ring-1 ring-primary/50" : ""
+      }`}
     >
       <span className="w-4 shrink-0" />
       <FileIcon className="h-4 w-4 shrink-0 text-text-tertiary" />
@@ -310,7 +195,14 @@ function NodeRow({
   );
 }
 
-export function FileTree({ skill, onInsertReference, virtualFiles }: FileTreeProps) {
+export function FileTree({
+  skill,
+  onInsertReference,
+  virtualFiles,
+  autoOpenPath,
+  onFileContentChange,
+  highlightPath,
+}: FileTreeProps) {
   const [tree, setTree] = useState<FileNode[]>([]);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [delRel, setDelRel] = useState<string | null>(null);
@@ -367,6 +259,32 @@ export function FileTree({ skill, onInsertReference, virtualFiles }: FileTreePro
     const diskRels = new Set(tree.map((n) => n.rel));
     return [...tree, ...virtualTree.filter((v) => !diskRels.has(v.rel))];
   }, [tree, virtualTree]);
+
+  // 受控聚焦（附件生成直播）：外部指定生成中的文件路径时，
+  // 自动展开父目录链并打开该文件；虚拟附件直接从内存取内容（随流式刷新）
+  useEffect(() => {
+    if (!autoOpenPath) return;
+    const parts = autoOpenPath.split("/").filter(Boolean);
+    if (parts.length > 1) {
+      setCollapsed((s) => {
+        const next = new Set(s);
+        for (let i = 0; i < parts.length - 1; i++) {
+          next.delete(parts.slice(0, i + 1).join("/"));
+        }
+        return next;
+      });
+    }
+    setOpenRel(autoOpenPath);
+    setOpenBinary(false);
+    const content = virtualMap.get(autoOpenPath);
+    if (content !== undefined) {
+      setOpenDraft(content);
+    } else if (skill) {
+      readSkillFile(`${skill.skill_dir}/${autoOpenPath}`)
+        .then(setOpenDraft)
+        .catch(() => setOpenDraft(""));
+    }
+  }, [autoOpenPath, virtualMap, skill]);
 
   // 切换文件时重置 AI 帮写 / 模板状态
   useEffect(() => {
@@ -656,6 +574,7 @@ export function FileTree({ skill, onInsertReference, virtualFiles }: FileTreePro
               onView={view}
               onDelete={setDelRel}
               onInsertRef={startInsertRef}
+              highlight={highlightPath === n.rel}
             />
           ))
         )}
@@ -765,7 +684,11 @@ export function FileTree({ skill, onInsertReference, virtualFiles }: FileTreePro
               {/* 编辑区：CodeEditor（行号 + 语法高亮，PLAN-12 ⑤） */}
               <CodeEditor
                 value={openDraft}
-                onChange={setOpenDraft}
+                onChange={(v) => {
+                  setOpenDraft(v);
+                  // 编辑内容上报（保存统一由右上角「保存」落盘，无局部保存按钮）
+                  if (onFileContentChange && openRel) onFileContentChange(openRel, v);
+                }}
                 lang={langOf(openRel ?? "")}
               />
             </>

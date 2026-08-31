@@ -44,6 +44,8 @@ export interface InterviewMessage {
   id: string;
   role: InterviewRole;
   content: string;
+  /** AI 思考过程（会话事件恢复后随消息展示；仅助手消息携带） */
+  reasoning?: string;
 }
 
 /** Conversation state is kept separate from the structured artifact state. */

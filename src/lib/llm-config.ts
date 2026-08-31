@@ -6,21 +6,32 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { MaskedConfig } from "./api";
 
+export type ThinkingMode = "enabled" | "disabled";
+export type ReasoningEffort = "low" | "high" | "max";
+
 export interface LLMConfig {
   apiKey: string;
   baseUrl: string;
   model: string;
+  /** 思考模式（默认关；仅 DeepSeek 端点发送且开启时附带） */
+  thinking: ThinkingMode;
+  /** 思考强度（默认 low；思考关闭时不发送） */
+  reasoningEffort: ReasoningEffort;
 }
 
 export const LLM_DEFAULTS = {
   baseUrl: "https://api.deepseek.com",
   model: "deepseek-v4-flash",
+  thinking: "disabled" as ThinkingMode,
+  reasoningEffort: "low" as ReasoningEffort,
 };
 
 const DEFAULT_LLM: LLMConfig = {
   apiKey: "",
   baseUrl: LLM_DEFAULTS.baseUrl,
   model: LLM_DEFAULTS.model,
+  thinking: LLM_DEFAULTS.thinking,
+  reasoningEffort: LLM_DEFAULTS.reasoningEffort,
 };
 
 let cachedConfig: (LLMConfig & { hasKey: boolean }) | null = null;
@@ -38,6 +49,11 @@ export async function loadLLMConfig(): Promise<LLMConfig & { hasKey: boolean }> 
       apiKey: rawKey,
       baseUrl: cfg.llm.base_url,
       model: cfg.llm.model,
+      thinking: cfg.llm.thinking === "enabled" ? "enabled" : "disabled",
+      reasoningEffort:
+        cfg.llm.reasoning_effort === "high" || cfg.llm.reasoning_effort === "max"
+          ? cfg.llm.reasoning_effort
+          : "low",
       hasKey: cfg._has_key,
     };
     return cachedConfig;
@@ -53,6 +69,8 @@ export function getLLMConfig(): LLMConfig {
       apiKey: cachedConfig.apiKey,
       baseUrl: cachedConfig.baseUrl,
       model: cachedConfig.model,
+      thinking: cachedConfig.thinking,
+      reasoningEffort: cachedConfig.reasoningEffort,
     };
   }
   return DEFAULT_LLM;
@@ -64,6 +82,8 @@ export async function saveLLMConfig(llm: LLMConfig): Promise<void> {
     llmApiKey: llm.apiKey,
     llmBaseUrl: llm.baseUrl,
     llmModel: llm.model,
+    llmThinking: llm.thinking,
+    llmReasoningEffort: llm.reasoningEffort,
   });
   cachedConfig = { ...llm, hasKey: !!llm.apiKey };
 }

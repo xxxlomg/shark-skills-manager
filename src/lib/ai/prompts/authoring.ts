@@ -8,16 +8,33 @@
 import type { WbDraft } from "@/lib/wb-draft";
 
 /**
+ * 规范骨架注入块（shark-skill-creator 压缩知识库）。
+ * guide 非空时注入到 prompt 开头；渐进披露：正文引用的深层知识由 AI 按需声明，
+ * 写作细则的具体化由「附件生成」阶段逐步补全。
+ */
+function guideBlock(guide?: string): string[] {
+  return guide?.trim()
+    ? [
+        "===== 创作规范（shark-skill-creator 骨架）=====",
+        guide.trim(),
+        "===== 规范结束 =====",
+        "",
+      ]
+    : [];
+}
+
+/**
  * W3 prompt 插槽（L1 一句话创作）。输出契约：直出 SKILL.md 原文（frontmatter 仅 name/description）。
  * 表单内容作为上下文喂入（AI 规划去模糊，§4.4）。
  * PLAN-11 阶段 0：面板删「何时用」，description 由「我的描述」(purpose) 承载；
  * description 须说清「做什么 + 使用场景」（场景由模型按主题补全），与能力 1 优化描述契约一致。
  */
-export function buildAuthoringPrompt(topic: string, draft: WbDraft): string {
+export function buildAuthoringPrompt(topic: string, draft: WbDraft, guide?: string): string {
   const ctx: string[] = [];
   if (draft.purpose.trim()) ctx.push(`我的描述：${draft.purpose.trim()}`);
   return [
     "你是一个技能创作助手。根据主题生成一份完整的 Agent Skill 文档。",
+    ...guideBlock(guide),
     "语言：正文与 description 一律用与主题一致的语言书写（主题是中文就用中文）。",
     "输出契约（硬规则）：",
     "1. 直接输出 SKILL.md 原文，以 --- 开头；",
@@ -64,17 +81,21 @@ export function buildDescOptimizePrompt(mydesc: string): string {
  * 面向「有想法但写不出代码」的用户（含小白）：模型直接产出可运行的成品，
  * 语言/格式按文件扩展名与目录类型自动判定。
  */
-export function buildFileAssistPrompt(opts: {
-  idea: string;
-  fileRel: string;
-  skillName: string;
-  skillDescription: string;
-  skillBody: string;
-}): string {
+export function buildFileAssistPrompt(
+  opts: {
+    idea: string;
+    fileRel: string;
+    skillName: string;
+    skillDescription: string;
+    skillBody: string;
+  },
+  guide?: string,
+): string {
   const ext = (opts.fileRel.split(".").pop() ?? "").toLowerCase();
   const top = opts.fileRel.split("/")[0];
   const lines = [
     "你是一个技能附件编写助手。用户有一个想法，但可能不具备编写该文件的能力，请你直接产出一份完整、可用的成品文件内容。",
+    ...guideBlock(guide),
     "判定文件类型（硬规则）：",
     `· 目标文件：${opts.fileRel}（顶层目录 ${top}，扩展名 .${ext || "无"}）；`,
     "· 按扩展名输出对应语言：.py→Python、.sh/.bash→Shell、.js/.mjs→Node.js、.md→Markdown、其余按目录语义（scripts→可执行脚本、references/templates/examples→Markdown 文档、assets→纯文本说明）；",
@@ -164,9 +185,11 @@ export function buildSkillReviewPrompt(
   skillName: string,
   skillContent: string,
   validationIssues: string,
+  guide?: string,
 ): string {
   return [
     "你是一个 Agent Skill 质量审查专家。请根据 shark-skill-creator 规范对以下技能进行全面审查。",
+    ...guideBlock(guide),
     "",
     "审查维度：",
     "1. trigger_accuracy：description 是否同时包含 WHAT（做什么）和 WHEN（何时用/触发场景）；",
@@ -214,10 +237,12 @@ export function buildContinueBodyPrompt(
   description: string,
   existingBody: string,
   additionalContext?: string,
+  guide?: string,
 ): string {
   const hasBody = existingBody.trim().length > 0;
   const lines = [
     "你是一个技能创作助手。请为技能生成 / 续写正文（body-only）。",
+    ...guideBlock(guide),
     "语言：用与描述一致的语言书写（中文描述 → 中文正文）。",
     "",
     "结构规范（shark-skill-creator 标准）：",
@@ -272,6 +297,7 @@ export function buildSkillFixPrompt(
   skillDescription: string,
   currentBody: string,
   issues: Array<{ severity: string; category: string; message: string; suggestion: string }>,
+  guide?: string,
 ): string {
   const issueList = issues
     .map((iss, i) => `${i + 1}. [${iss.severity}] (${iss.category}) ${iss.message} → 建议：${iss.suggestion}`)
@@ -279,6 +305,7 @@ export function buildSkillFixPrompt(
 
   return [
     "你是一个 Agent Skill 修复专家。请根据审查报告中的问题，对技能正文进行精准修复。",
+    ...guideBlock(guide),
     "语言：用与技能描述一致的语言书写。",
     "",
     "修复原则（shark-skill-creator 规范）：",
@@ -299,6 +326,68 @@ export function buildSkillFixPrompt(
     "```md",
     currentBody.trim() || "（空）",
     "```",
+  ].join("\n");
+}
+
+/**
+ * 附件补全 prompt（B3 完整包渐进生成）：按 SKILL.md 正文中已声明的引用，
+ * 逐文件生成「真实可用」的附件内容（不是占位模板）。
+ * 与 buildFileAssistPrompt 的区别：输入来源是正文引用而非用户想法，
+ * 且必须遵循 references/scripts/assets 的分工语义（浅层知识不进 references）。
+ */
+export function buildAttachmentDraftPrompt(
+  opts: {
+    fileRel: string;
+    skillName: string;
+    skillDescription: string;
+    skillBody: string;
+  },
+  guide?: string,
+): string {
+  const ext = (opts.fileRel.split(".").pop() ?? "").toLowerCase();
+  const top = opts.fileRel.split("/")[0];
+  const lines = [
+    "你是一个技能附件编写助手。请为技能补全一份附件文件，产出一份「真实可用」的成品内容。",
+    ...guideBlock(guide),
+    "判定文件类型（硬规则）：",
+    `· 目标文件：${opts.fileRel}（顶层目录 ${top}，扩展名 .${ext || "无"}）；`,
+    "· references/ → Markdown 文档：领域知识、官方文档摘要、规范与最佳实践；",
+    "· scripts/ → 可执行脚本：含 shebang / 导入 / 入口与输入校验，确定性操作不靠 LLM 猜；",
+    "· assets/ → 模板、素材（按扩展名输出对应格式）；",
+    "输出契约（硬规则）：",
+    "1. 只输出该文件完整内容本身，第一行就是文件内容；",
+    "2. 不输出 ``` 代码围栏、不输出 JSON、不输出任何解释或前后缀文字；",
+    "3. 禁止「待补充」「TODO」「待完善」等占位文案——给出的每一条目都必须是可直接使用的内容；",
+    "4. 内容必须紧密服务下方技能的目录与正文引用点（若正文写「详见本文件」，则本文件必须回答正文所指的问题）；",
+    "5. 与技能名称/描述上下文一致，可被 SKILL.md 正文直接引用。",
+    "",
+    "技能上下文：",
+    `· name：${opts.skillName}`,
+    `· description：${opts.skillDescription || "（无）"}`,
+    "· 正文（引用点所在）：",
+    "```md",
+    opts.skillBody.trim() || "（空）",
+    "```",
+  ];
+  return lines.join("\n");
+}
+
+/**
+ * Skill 标题总结 prompt（C6）：根据描述 + 已生成正文，AI 输出精准技能名。
+ * 输出契约：单个 hyphen-case name，无解释无围栏（避免 skills-skills 之类空泛名）。
+ */
+export function buildSkillTitlePrompt(description: string, body: string): string {
+  return [
+    "你是技能命名助手。根据技能内容输出一个精准的技能名。",
+    "输出契约（硬规则）：",
+    "1. 只输出一个 name：hyphen-case（小写字母、数字、连字符），2-5 个英文单词；",
+    "2. 中文内容用英文直译或拼音缩写；避免泛泛词（skill/task/do）；",
+    "3. 不输出任何解释、引号、代码围栏。",
+    "",
+    `技能描述：${description.trim()}`,
+    "",
+    "正文摘要：",
+    body.trim().slice(0, 1500) || "（空）",
   ].join("\n");
 }
 

@@ -107,6 +107,46 @@ fn new_repo_dir() -> std::io::Result<PathBuf> {
     Ok(dir)
 }
 
+/// 共享的 git 浅克隆通道（PLAN-06 §1.8）：收敛双 clone 通道的唯一入口。
+///
+/// - 落 `<data_dir>/tmp/repo-*`（App 启动即清区），**不用系统 TEMP**；
+/// - `--depth 1 --single-branch` + 500MB 体积闸，失败/超限即删即报、零残留；
+/// - 货架浏览（repo_browse）与 URL 导入 git 兜底（import::preview_via_clone）
+///   都走本函数，保证临时目录生命周期与体积闸单一实现。
+///
+/// 返回 clone 目录（内容即仓库根，含 .git）；调用方负责使用后的清理
+/// （操作结束即删；未 commit 的残留由 App 启动清理兜底）。
+pub(crate) async fn clone_repo_to_tmp(url: &str) -> Result<PathBuf, String> {
+    let clone_dir = new_repo_dir().map_err(|e| format!("创建临时目录失败: {}", e))?;
+    // new_repo_dir 已创建目录；git clone 要求目标不存在或为空目录
+    let _ = std::fs::remove_dir(&clone_dir);
+    if let Err(e) = crate::git::run(
+        None,
+        &[
+            "clone",
+            "--depth",
+            "1",
+            "--single-branch",
+            url,
+            clone_dir.to_string_lossy().as_ref(),
+        ],
+    )
+    .await
+    {
+        let _ = std::fs::remove_dir_all(&clone_dir);
+        return Err(e.message());
+    }
+    let size = dir_size(&clone_dir);
+    if size > MAX_REPO_BYTES {
+        let _ = std::fs::remove_dir_all(&clone_dir);
+        return Err(format!(
+            "仓库内容 {:.0}MB，超过 500MB 导入上限（已清理临时文件）",
+            size as f64 / 1024.0 / 1024.0
+        ));
+    }
+    Ok(clone_dir)
+}
+
 // ---------------------------------------------------------------------------
 // 校验工具
 // ---------------------------------------------------------------------------
@@ -333,25 +373,7 @@ pub async fn repo_browse(url: &str) -> Result<ShelfPreview, String> {
 }
 
 async fn browse_via_git(url: &str) -> Result<ShelfPreview, String> {
-    let clone_dir = new_repo_dir().map_err(|e| format!("创建临时目录失败: {}", e))?;
-    // new_repo_dir 已创建目录；git clone 要求目标不存在或为空目录
-    let _ = std::fs::remove_dir(&clone_dir);
-    let res = crate::git::run(
-        None,
-        &[
-            "clone",
-            "--depth",
-            "1",
-            "--single-branch",
-            url,
-            clone_dir.to_string_lossy().as_ref(),
-        ],
-    )
-    .await;
-    if let Err(e) = res {
-        let _ = std::fs::remove_dir_all(&clone_dir);
-        return Err(e.message());
-    }
+    let clone_dir = clone_repo_to_tmp(url).await?;
     finish_browse_from_root(clone_dir.clone(), clone_dir, url, "git")
 }
 

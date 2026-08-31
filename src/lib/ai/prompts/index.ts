@@ -13,10 +13,12 @@ export {
   buildDescRefineApplyPrompt,
   buildContinueBodyPrompt,
   buildFileAssistPrompt,
+  buildAttachmentDraftPrompt,
   buildSkillReviewPrompt,
   buildSkillFixPrompt,
   buildInterviewNextQuestionPrompt,
   buildInterviewAgentPrompt,
+  buildSkillTitlePrompt,
 } from "./authoring";
 export { buildSkillSummaryPrompt, SUMMARY_INPUT_CAP } from "./summary";
 export { buildMergePolishPrompt, MERGE_POLISH_INPUT_CAP } from "./merge";

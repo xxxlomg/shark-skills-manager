@@ -150,6 +150,21 @@ pub fn get_data_dir() -> PathBuf {
         .unwrap_or_else(|| DATA_DIR.get().cloned().unwrap_or_else(legacy_data_dir))
 }
 
+/// Agent 会话事件日志目录（事件溯源：每会话一个 JSONL 文件，只追加）
+pub fn sessions_dir() -> PathBuf {
+    get_data_dir().join("sessions")
+}
+
+/// 会话文件路径：session_id 白名单净化（防路径逃逸），扩展名固定 .jsonl
+pub fn session_path(session_id: &str) -> PathBuf {
+    let safe: String = session_id
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .collect();
+    let key = if safe.is_empty() { "session" } else { &safe };
+    sessions_dir().join(format!("{key}.jsonl"))
+}
+
 /// 单测专用：把当前测试线程的数据目录指到临时目录，避免触碰真实用户数据。
 /// 线程局部覆盖 → 并行测试各自隔离，不再共享全局竞态。
 #[cfg(test)]
@@ -253,6 +268,12 @@ pub struct LLMConfig {
     pub base_url: String,
     #[serde(default = "default_model")]
     pub model: String,
+    /// 思考模式：enabled/disabled（默认关；请求侧仅在 DeepSeek 端点发送且开启时附带）
+    #[serde(default = "default_thinking")]
+    pub thinking: String,
+    /// 思考强度：low/high/max（默认 low；思考关闭时不发送）
+    #[serde(default = "default_reasoning_effort")]
+    pub reasoning_effort: String,
 }
 
 fn default_base_url() -> String {
@@ -261,6 +282,14 @@ fn default_base_url() -> String {
 
 fn default_model() -> String {
     "deepseek-v4-flash".to_string()
+}
+
+fn default_thinking() -> String {
+    "disabled".to_string()
+}
+
+fn default_reasoning_effort() -> String {
+    "low".to_string()
 }
 
 /// v0.2 工具注册表条目（PLAN-06 §2.6）
@@ -340,6 +369,8 @@ fn default_llm() -> LLMConfig {
         api_key: String::new(),
         base_url: default_base_url(),
         model: default_model(),
+        thinking: default_thinking(),
+        reasoning_effort: default_reasoning_effort(),
     }
 }
 
@@ -709,6 +740,39 @@ pub fn cleanup_tmp_dir() {
     }
 }
 
+/// 会话事件日志保留策略（磁盘侧护栏，与 DeepSeek 会话长度护栏同族）：
+/// 启动清理超过 TTL 的 .jsonl 会话文件，活跃会话不受影响。
+/// 事件数上限在 commands::session_append 内另做截断（两道护栏互补）。
+pub fn cleanup_stale_sessions(ttl_days: u64) {
+    let dir = sessions_dir();
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return;
+    };
+    let Some(cutoff) = std::time::SystemTime::now()
+        .checked_sub(std::time::Duration::from_secs(ttl_days * 24 * 3600))
+    else {
+        return;
+    };
+    let mut removed = 0usize;
+    for entry in entries.flatten() {
+        if !entry.path().extension().is_some_and(|e| e == "jsonl") {
+            continue;
+        }
+        let stale = entry
+            .metadata()
+            .ok()
+            .and_then(|m| m.modified().ok())
+            .map(|t| t < cutoff)
+            .unwrap_or(false);
+        if stale && std::fs::remove_file(entry.path()).is_ok() {
+            removed += 1;
+        }
+    }
+    if removed > 0 {
+        debug_log(&format!("startup: 清理过期会话 {removed} 个（>{ttl_days} 天）"));
+    }
+}
+
 /// v0.1 scan_paths → v0.2 tools 迁移（幂等：load 侧仅在 tools 缺失时调用）。
 /// 语义：同 label 多行合并为一个 tool（候选级开关坍缩为工具级，OR 语义）；
 /// 已知 label 的非标准路径作为附加候选保留（不丢用户自定义落点）。
@@ -954,6 +1018,10 @@ pub struct MaskedLLM {
     pub api_key: String,
     pub base_url: String,
     pub model: String,
+    /// 思考模式 enabled/disabled（脱敏后原样透出，非敏感字段）
+    pub thinking: String,
+    /// 思考强度 low/high/max
+    pub reasoning_effort: String,
 }
 
 pub fn load_masked_config() -> MaskedConfig {
@@ -972,6 +1040,8 @@ pub fn load_masked_config() -> MaskedConfig {
             api_key: masked_key,
             base_url: cfg.llm.base_url,
             model: cfg.llm.model,
+            thinking: cfg.llm.thinking,
+            reasoning_effort: cfg.llm.reasoning_effort,
         },
         _has_key: !cfg.llm.api_key.is_empty(),
         publish_repo: cfg.publish_repo,
@@ -1018,6 +1088,66 @@ mod tests {
         assert_eq!(expand_path("$SK_TEST_HOME").unwrap(), PathBuf::from(r"C:\fake-codex"));
         std::env::remove_var("SK_TEST_HOME");
         assert!(expand_path("$SK_TEST_HOME/skills").is_none()); // 未设置 → 候选失效
+    }
+
+    // ---- session 事件日志（事件溯源：JSONL 只追加 + 全量重放） ----
+
+    #[test]
+    fn session_jsonl_append_load_roundtrip() {
+        let prev = crate::config::get_data_dir();
+        let dir = std::env::temp_dir().join(format!("shark-session-test-{}", std::process::id()));
+        set_data_dir_for_test(dir.clone());
+
+        let sid = "t-abc_123";
+        for i in 0..3 {
+            crate::commands::session_append(
+                sid.to_string(),
+                serde_json::json!({"kind": "user_msg", "content": format!("msg-{i}")}),
+            )
+            .unwrap();
+        }
+        let events = crate::commands::session_load(sid.to_string()).unwrap();
+        assert_eq!(events.len(), 3);
+        assert_eq!(events[0]["content"], serde_json::json!("msg-0"));
+        assert_eq!(events[2]["content"], serde_json::json!("msg-2"));
+
+        // 不存在的会话 → SESSION_NOT_FOUND（前端降级为空会话）
+        assert!(crate::commands::session_load("nope".to_string()).is_err());
+
+        // 路径净化：恶意字符不逃逸 sessions/ 目录
+        let safe = crate::config::session_path("..\\evil/name");
+        assert_eq!(safe.file_name().unwrap().to_string_lossy(), "___evil_name.jsonl");
+
+        let _ = std::fs::remove_dir_all(&dir);
+        set_data_dir_for_test(prev);
+    }
+
+    #[test]
+    fn stale_sessions_cleaned_by_ttl() {
+        // 保留策略：超 TTL 的会话文件被启动清理，TTL 内的保留
+        let prev = crate::config::get_data_dir();
+        let dir = std::env::temp_dir().join(format!("shark-session-ttl-{}", std::process::id()));
+        set_data_dir_for_test(dir.clone());
+
+        let fresh = crate::config::session_path("fresh");
+        let stale = crate::config::session_path("stale");
+        std::fs::create_dir_all(fresh.parent().unwrap()).unwrap();
+        std::fs::write(&fresh, "{\"kind\":\"user_msg\"}\n").unwrap();
+        std::fs::write(&stale, "{\"kind\":\"user_msg\"}\n").unwrap();
+        // 把 stale 的 mtime 拨到 40 天前（TTL=30 → 应被清）
+        let old = std::time::SystemTime::now()
+            .checked_sub(std::time::Duration::from_secs(40 * 24 * 3600))
+            .unwrap();
+        let f = std::fs::OpenOptions::new().write(true).open(&stale).unwrap();
+        f.set_modified(old).unwrap();
+
+        crate::config::cleanup_stale_sessions(30);
+
+        assert!(fresh.exists(), "TTL 内的会话保留");
+        assert!(!stale.exists(), "超 TTL 的会话被清理");
+
+        let _ = std::fs::remove_dir_all(&dir);
+        set_data_dir_for_test(prev);
     }
 
     // ---- effective_import_path（P5 下载/导入目录）----

@@ -13,12 +13,13 @@ import { cn } from "@/lib/utils";
 import {
   InterviewEngine,
   STAGE_LABELS,
-  type AgentAction,
   type InterviewMessage,
   type InterviewOption,
 } from "@/lib/interview-engine";
-import { interviewAgentTurn } from "@/lib/authoring-api";
+import { interviewAgentTurn, resetInterviewAgentState } from "@/lib/authoring-api";
 import { skillCreatorInfo, skillCreatorRead } from "@/lib/api";
+import type { SessionEvent } from "@/lib/session-store";
+import { ThinkingBlock } from "./ThinkingBlock";
 
 /**
  * Agentic 对话式访谈组件（shark-skill-creator 协议，v3）。
@@ -35,6 +36,14 @@ interface InterviewGuideProps {
   onComplete: (structuredContext: string) => void;
   onSkip: () => void;
   busy?: boolean;
+  /** 会话事件回写（事件溯源：访谈消息落盘；不传则不记录） */
+  onRecord?: (ev: SessionEvent) => void;
+  /** 历史对话（会话恢复）：预填引擎消息，AI 基于既有上下文继续 */
+  initialMessages?: Array<{
+    id: string;
+    role: "user" | "assistant" | "system";
+    content: string;
+  }>;
 }
 
 const MAX_READS_PER_TURN = 4; // 单轮最多读取文件数，防死循环
@@ -48,25 +57,51 @@ interface CurrentQ {
   analysis?: string;
 }
 
+/**
+ * 剥离选项末尾的 UI 提示标签（如「（推荐）」）：发送与展示都不携带冗余标识，
+ * 保证对话气泡、会话持久化与回溯内容干净。
+ */
+function stripRecommendTag(label: string): string {
+  return label.replace(/[（(]\s*推荐\s*[）)]\s*$/g, "").trim();
+}
+
+/**
+ * 自由输入引导项判定：「其他 / 其它 / 自定义」类选项是提示去输入框手动输入的，
+ * 不作为消息直接发送（避免把引导语全文送进对话历史）。
+ */
+function isFreeformOption(label: string): boolean {
+  return /(其他|其它|自定义)/.test(label);
+}
+
 export function InterviewGuide({
   description,
   onComplete,
   onSkip,
   busy,
+  onRecord,
+  initialMessages,
 }: InterviewGuideProps) {
   const engineRef = useRef<InterviewEngine | null>(null);
   const [messages, setMessages] = useState<InterviewMessage[]>([]);
   const [currentQ, setCurrentQ] = useState<CurrentQ | null>(null);
   const [inputValue, setInputValue] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [inputPlaceholder, setInputPlaceholder] = useState("用自然语言回答…");
   const [thinking, setThinking] = useState(false);
+  const [reasoningText, setReasoningText] = useState("");
+  const [reasoningDone, setReasoningDone] = useState(false);
+  // 本轮思考全文 ref（onThinking 逐块累积；pushAssistant 时随 assistant_msg 事件持久化）
+  const reasoningRef = useRef("");
   const [readingFile, setReadingFile] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const initialized = useRef(false);
+  /** 降级提示只播一次（本轮会话内） */
+  const degradedNotifiedRef = useRef(false);
 
-  // 渐进披露知识库：SKILL.md（基础）+ AI 按需读取的 references
+  // 渐进披露知识库：骨架（summary）+ AI 按需读取的 references 全文
   const knowledgeRef = useRef<string>("");
-  const referencesRef = useRef<Array<{ rel_path: string; title: string }>>([]);
+  const referencesRef = useRef<Array<{ rel_path: string; title: string; purpose?: string }>>([]);
 
   const sync = () => {
     const e = engineRef.current;
@@ -82,12 +117,24 @@ export function InterviewGuide({
     initialized.current = true;
     const engine = new InterviewEngine(description);
     engineRef.current = engine;
+    // 会话恢复：预填历史对话消息（AI 基于既有上下文继续；思考过程已在面板侧随消息展示）
+    for (const im of initialMessages ?? []) {
+      if (im.role === "user") engine.pushUser(im.content);
+      else if (im.role === "assistant") engine.pushAssistant(im.content, undefined, "discover");
+    }
+    // 每场访谈重置连续失败计数：不把上一场的失败带过来（防永久降级）
+    resetInterviewAgentState();
     (async () => {
       try {
         const info = await skillCreatorInfo();
         if (info) {
-          knowledgeRef.current = info.skill_md;
-          referencesRef.current = info.references.map((r) => ({ rel_path: r.rel_path, title: r.title }));
+          // 首轮只注入压缩骨架（规范全文按需 read 回注，渐进披露）
+          knowledgeRef.current = info.summary?.trim() || info.skill_md;
+          referencesRef.current = info.references.map((r) => ({
+            rel_path: r.rel_path,
+            title: r.title,
+            purpose: r.purpose,
+          }));
         }
       } catch { /* 规范缺失时降级 */ }
       void agentLoop();
@@ -113,7 +160,7 @@ export function InterviewGuide({
       collectedJson: JSON.stringify(e.collected),
       loadedKnowledge: knowledgeRef.current,
       availableReferences: referencesRef.current
-        .map((r) => `- ${r.rel_path}（${r.title}）`)
+        .map((r) => `- ${r.rel_path}${r.purpose ? `（${r.purpose}）` : ""}`)
         .join("\n") || "（无）",
       // 已问过的主题（最近几条 AI 问题），供 prompt 防重复
       askedTopics: e.messages
@@ -121,6 +168,13 @@ export function InterviewGuide({
         .slice(-6)
         .map((m) => m.content)
         .join(" | "),
+      // T4：会话真实消息数组（结构化多轮，system 层外置）
+      llmMessages: e.messages
+        .filter((m) => m.role === "user" || m.role === "assistant")
+        .map((m) => ({
+          role: (m.role === "user" ? "user" : "assistant") as "user" | "assistant",
+          content: m.content,
+        })),
       duplicateHint,
     };
   }, [description]);
@@ -130,12 +184,32 @@ export function InterviewGuide({
     const e = engineRef.current;
     if (!e) return;
     setThinking(true);
+    // 每轮开始：清空上一轮思考视觉（仅内存，不持久化）
+    setReasoningText("");
+    setReasoningDone(false);
+    reasoningRef.current = "";
     try {
       let reads = 0;
       let hint = duplicateHint;
       // 内层循环处理连续的 read 动作（渐进披露）
       for (;;) {
-        const act: AgentAction = await interviewAgentTurn(buildOpts(hint));
+        const res = await interviewAgentTurn({
+          ...buildOpts(hint),
+          onThinking: (d) => {
+            reasoningRef.current += d;
+            setReasoningText((s) => s + d);
+          },
+        });
+        const act = res.action;
+        // 本轮回合并结束：思考自动收起（ThinkingBlock 响应 active 变化）
+        setReasoningDone(true);
+
+        // 降级明示：连续失败已切换本地引导（仅提示一次）
+        if (res.degraded && !degradedNotifiedRef.current) {
+          degradedNotifiedRef.current = true;
+          e.pushSystem("⚠️ AI 暂不可用（连续失败），已切换本地引导。可在设置页检查 LLM 连接。");
+          sync();
+        }
 
         if (act.action === "read" && act.path && reads < MAX_READS_PER_TURN && !e.loadedFiles.has(act.path)) {
           reads++;
@@ -145,6 +219,7 @@ export function InterviewGuide({
             knowledgeRef.current += `\n\n【${act.path}】\n${content}`;
             e.loadedFiles.add(act.path);
             e.pushSystem(`已加载规范：${act.path}`);
+            onRecord?.({ kind: "tool_read", content, extra: { file: act.path } });
             sync();
           } catch {
             e.loadedFiles.add(act.path); // 读取失败也标记，避免反复尝试
@@ -178,6 +253,16 @@ export function InterviewGuide({
 
         e.markAsked(question);
         e.pushAssistant(question, act.options, act.stage || "discover");
+        // 新问题就位：输入框提示词复位（上轮「自由输入」引导已失效）
+        setInputPlaceholder("用自然语言回答…");
+        // 思考过程持久化：作为 assistant 消息的 reasoning 附注进会话事件日志
+        // （res.thinking 与 reasoningRef 双源，任一非空即记录）
+        const reasoning = reasoningRef.current || res.thinking || "";
+        onRecord?.({
+          kind: "assistant_msg",
+          content: question,
+          extra: reasoning ? { reasoning } : undefined,
+        });
         e.currentQuestion = { question, options: act.options, field: act.field, stage: act.stage || "discover" };
         setCurrentQ({ question, options: act.options, field: act.field, stage: act.stage || "discover", analysis: act.analysis });
         sync();
@@ -212,6 +297,7 @@ export function InterviewGuide({
     setInputValue("");
     e.pushUser(answer, currentQ.stage);
     e.recordAnswer(answer, currentQ.field);
+    onRecord?.({ kind: "user_msg", content: answer });
     setCurrentQ(null);
     sync();
     void agentLoop();
@@ -260,7 +346,8 @@ export function InterviewGuide({
               正在读取规范：{readingFile}…
             </div>
           )}
-          {thinking && !readingFile && (
+          <ThinkingBlock thinking={reasoningText} active={thinking && !reasoningDone} />
+          {thinking && !readingFile && (!reasoningText) && (
             <div className="flex items-center gap-2 text-[11px] text-text-tertiary">
               <Loader2 className="h-3 w-3 animate-spin" />
               AI 正在分析你的描述…
@@ -273,21 +360,34 @@ export function InterviewGuide({
       {currentQ && !thinking && currentQ.options && currentQ.options.length > 0 && (
         <div className="shrink-0 border-t border-border/30 px-4 py-2">
           <div className="flex flex-wrap gap-1.5">
-            {currentQ.options.map((opt) => (
-              <button
-                key={opt.label}
-                type="button"
-                disabled={busy || thinking}
-                onClick={() => submitAnswer(opt.label)}
-                className={cn(
-                  "rounded-md border border-border/50 bg-glass-1 px-2.5 py-1.5 text-[11px] text-text-secondary transition-colors hover:border-primary/40 hover:bg-primary/5 hover:text-text-primary",
-                  opt.recommended && "border-primary/30 bg-primary/5",
-                )}
-              >
-                {opt.label}
-                {opt.recommended && <span className="ml-1 text-[9px] text-primary">推荐</span>}
-              </button>
-            ))}
+            {currentQ.options.map((opt) => {
+              const clean = stripRecommendTag(opt.label);
+              const isFree = isFreeformOption(clean);
+              return (
+                <button
+                  key={opt.label}
+                  type="button"
+                  disabled={busy || thinking}
+                  onClick={() => {
+                    if (isFree) {
+                      // 自由输入引导：不发送，聚焦输入框等待用户手动输入
+                      setInputValue("");
+                      setInputPlaceholder("请输入你的自定义场景描述...");
+                      requestAnimationFrame(() => inputRef.current?.focus());
+                      return;
+                    }
+                    submitAnswer(clean);
+                  }}
+                  className={cn(
+                    "rounded-md border border-border/50 bg-glass-1 px-2.5 py-1.5 text-[11px] text-text-secondary transition-colors hover:border-primary/40 hover:bg-primary/5 hover:text-text-primary",
+                    opt.recommended && "border-primary/30 bg-primary/5",
+                  )}
+                >
+                  {clean}
+                  {opt.recommended && <span className="ml-1 text-[9px] text-primary">推荐</span>}
+                </button>
+              );
+            })}
           </div>
         </div>
       )}
@@ -296,10 +396,11 @@ export function InterviewGuide({
       <div className="shrink-0 border-t border-border/30 px-4 py-2.5">
         <div className="flex items-center gap-2">
           <input
+            ref={inputRef}
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && inputValue.trim()) submitAnswer(inputValue.trim()); }}
-            placeholder="用自然语言回答…"
+            placeholder={inputPlaceholder}
             className="h-8 min-w-0 flex-1 rounded-md border border-input bg-transparent px-3 text-[12px] outline-none placeholder:text-text-tertiary/70 focus:border-primary focus:ring-1 focus:ring-primary/20"
           />
           <Button type="button" size="sm" className="h-8 w-8 shrink-0 p-0" disabled={!inputValue.trim() || thinking || busy} onClick={() => submitAnswer(inputValue.trim())}>
@@ -309,8 +410,7 @@ export function InterviewGuide({
             <SkipForward className="h-3 w-3" />
           </Button>
         </div>
-        <div className="mt-1.5 flex items-center justify-between">
-          <span className="text-[10px] text-text-tertiary">AI 按 shark-skill-creator 规范动态提问</span>
+        <div className="mt-1.5 flex items-center justify-end">
           <button type="button" className="text-[10px] text-text-tertiary underline hover:text-text-secondary" onClick={onSkip}>
             跳过全部，直接生成
           </button>
@@ -351,7 +451,7 @@ function MessageBubble({ msg }: { msg: InterviewMessage }) {
           <Bot className="h-3 w-3 text-primary" />
         </span>
       )}
-      <div className={cn("max-w-[85%] rounded-lg px-3 py-2 text-[12px] leading-relaxed", isAI ? "bg-glass-1 text-text-primary" : "bg-primary/10 text-text-primary")}>
+      <div className={cn("anim-jelly-in max-w-[85%] rounded-lg px-3 py-2 text-[12px] leading-relaxed", isAI ? "bg-glass-1 text-text-primary" : "bg-primary/10 text-text-primary")}>
         <p className="whitespace-pre-line">{msg.content}</p>
       </div>
       {!isAI && (

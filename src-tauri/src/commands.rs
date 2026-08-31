@@ -131,6 +131,80 @@ pub fn scan_library_tree(force: Option<bool>) -> Result<Vec<scanner::LibraryTree
 }
 
 // ---------------------------------------------------------------------------
+// session_append / session_load — Agent 会话事件溯源日志（JSONL 只追加）
+// 每行一个类型化事件；load 全量重放，由前端组装成 system + messages。
+// 保留策略两道护栏：单会话事件数截断（下方）+ 启动 TTL 清理（config::cleanup_stale_sessions）。
+// ---------------------------------------------------------------------------
+
+/// 单会话事件数护栏：超过上限截断最旧事件（保留最近部分），防 JSONL 无限膨胀拖慢重放。
+const SESSION_EVENT_LIMIT: usize = 600;
+const SESSION_KEEP_RECENT: usize = 400;
+
+#[tauri::command]
+pub fn session_append(session_id: String, event: serde_json::Value) -> Result<(), String> {
+    use std::io::Write;
+    let path = config::session_path(&session_id);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("会话目录创建失败: {e}"))?;
+    }
+    let line = serde_json::to_string(&event).map_err(|e| format!("事件序列化失败: {e}"))?;
+    if line.len() > 1_000_000 {
+        return Err("single session event too large".into());
+    }
+    {
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .map_err(|e| format!("会话文件打开失败: {e}"))?;
+        writeln!(f, "{}", line).map_err(|e| format!("会话写入失败: {e}"))?;
+    }
+    // 事件数护栏（与 DeepSeek 会话长度护栏同族）：文件超阈值才数行，
+    // 超限则截断最旧事件、保留最近 SESSION_KEEP_RECENT 条。
+    // 截断后早期上下文不可恢复——这是护栏的预期代价（防无限膨胀优先）。
+    if std::fs::metadata(&path).map(|m| m.len() > 512 * 1024).unwrap_or(false) {
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            return Ok(());
+        };
+        let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+        if lines.len() > SESSION_EVENT_LIMIT {
+            let keep = lines[lines.len() - SESSION_KEEP_RECENT..].join("\n");
+            let _ = std::fs::write(&path, keep + "\n");
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn session_load(session_id: String) -> Result<Vec<serde_json::Value>, String> {
+    let path = config::session_path(&session_id);
+    let text = std::fs::read_to_string(&path).map_err(|_| "SESSION_NOT_FOUND".to_string())?;
+    let mut out: Vec<serde_json::Value> = Vec::new();
+    for line in text.lines() {
+        let t = line.trim();
+        if t.is_empty() {
+            continue;
+        }
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(t) {
+            out.push(v);
+        }
+        // 损坏行跳过：事件日志逐行独立，单行损坏不阻断会话恢复
+    }
+    Ok(out)
+}
+
+/// 主动放弃创作时删除会话事件日志（不存在视为成功，幂等）
+#[tauri::command]
+pub fn session_delete(session_id: String) -> Result<(), String> {
+    let path = config::session_path(&session_id);
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("会话删除失败: {e}")),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // read_translation — 读取译文内容
 // ---------------------------------------------------------------------------
 
@@ -263,12 +337,25 @@ pub fn save_config(
     llm_api_key: String,
     llm_base_url: String,
     llm_model: String,
+    llm_thinking: Option<String>,
+    llm_reasoning_effort: Option<String>,
 ) -> Result<(), String> {
+    // 白名单归一：非法值回退默认，避免脏配置直写请求体
+    let thinking = match llm_thinking.as_deref() {
+        Some("enabled") => "enabled".to_string(),
+        _ => "disabled".to_string(),
+    };
+    let reasoning_effort = match llm_reasoning_effort.as_deref() {
+        Some("high" | "max") => llm_reasoning_effort.unwrap(),
+        _ => "low".to_string(),
+    };
     config::debug_log(&format!(
-        "save_config CALLED: api_key_len={} base_url={} model={}",
+        "save_config CALLED: api_key_len={} base_url={} model={} thinking={} reasoning_effort={}",
         llm_api_key.len(),
         llm_base_url,
-        llm_model
+        llm_model,
+        thinking,
+        reasoning_effort
     ));
     let old = config::load_config();
     let final_key = if llm_api_key.contains("****") && !old.llm.api_key.is_empty() {
@@ -283,6 +370,8 @@ pub fn save_config(
             api_key: final_key,
             base_url: llm_base_url,
             model: llm_model,
+            thinking,
+            reasoning_effort,
         },
         publish_repo: old.publish_repo,
         download_dir: old.download_dir,
@@ -369,6 +458,8 @@ pub fn hub_link_skill(
     )
 }
 
+/// 解除引用（PLAN-06 文档命令名 hub_unlink；实现名带 skill 后缀以区别于工具删除）。
+/// 仅删链接本体（PLAN-06 §2.5 铁律），copy 模式只清账本；绝不删源文件。
 #[tauri::command]
 pub fn hub_unlink_skill(link_id: String) -> Result<hub::HubLink, String> {
     hub::unlink_skill(&config::get_data_dir(), &link_id)
@@ -1071,6 +1162,13 @@ pub fn detect_duplicates() -> Vec<dedup::DupGroup> {
     let cfg = config::load_config();
     let targets = config::scan_targets_from_tools(&cfg.tools);
     let skills = scanner::scan_all_skills(&targets);
+    // 冲突点 C1：Hub copy 落点是「分发副本」，不是重复技能——从查重候选排除；
+    // 技能库可见性不受影响（scanner 代表选取不变，copy 落点仍为代表可见）。
+    let ledger = hub::load_ledger(&config::get_data_dir());
+    let skills: Vec<Skill> = skills
+        .into_iter()
+        .filter(|s| !dedup::is_ledger_copy_target(&s.skill_dir, &ledger))
+        .collect();
     let groups = dedup::detect(&skills);
     config::debug_log(&format!(
         "detect_duplicates: skills={} groups={} elapsed={}ms",

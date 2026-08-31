@@ -302,11 +302,6 @@ export function AllSkillsView({
                       {collectionRelativeName(s.scan_label, s.parent_collection)}
                     </span>
                   )}
-                  {s.tool_id === "authored" && (
-                    <span className="rounded border border-brand/40 bg-brand/10 px-1.5 py-px text-[10px] text-brand">
-                      ✍️ authored
-                    </span>
-                  )}
                 </div>
                 <p className="mt-[10px] line-clamp-2 text-[12.5px] leading-relaxed text-text-secondary">
                   {s.description_zh || s.description || "暂无描述"}
@@ -350,11 +345,6 @@ export function AllSkillsView({
               {s.parent_collection && (
                 <span className="hidden max-w-[140px] shrink-0 truncate rounded-md border border-stroke/70 bg-glass px-1.5 py-[1px] text-[10.5px] text-text-tertiary sm:block">
                   {collectionRelativeName(s.scan_label, s.parent_collection)}
-                </span>
-              )}
-              {s.tool_id === "authored" && (
-                <span className="shrink-0 rounded border border-brand/40 bg-brand/10 px-1.5 py-px text-[10px] text-brand">
-                  ✍️ authored
                 </span>
               )}
               <span className="shrink-0">

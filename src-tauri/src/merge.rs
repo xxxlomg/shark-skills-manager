@@ -189,6 +189,23 @@ fn compute_result_skill_id(target: &Path) -> Option<String> {
     None
 }
 
+/// 台账中是否存在 target（canonicalize 后）与给定目录相同的链接；返回命中条目。
+/// 供合并落点守卫（地雷 3）复用；目录不存在时返回 None。
+fn ledger_hit_target<'a>(
+    ledger: &'a crate::hub::LinksLedger,
+    dir: &Path,
+) -> Option<&'a crate::hub::HubLink> {
+    let canon = std::fs::canonicalize(dir).unwrap_or_default();
+    if canon.as_os_str().is_empty() {
+        return None;
+    }
+    ledger.links.iter().find(|l| {
+        std::fs::canonicalize(Path::new(&l.target))
+            .map(|p| p == canon)
+            .unwrap_or(false)
+    })
+}
+
 /// 回收站语义处置单个技能目录；若该目录就是合并产物落点（原地合并）则跳过。
 fn dispose_side(skill: &crate::scanner::Skill, merged_dir: &Path) -> Result<(), String> {
     if skill.source_deleted {
@@ -300,6 +317,23 @@ pub fn apply_merge(args: ApplyMergeArgs) -> Result<MergeResult, String> {
                 n
             ));
         }
+    }
+
+    // ---- 地雷 3（冲突点 C3）：合并落点不能落在 Hub 引用目录上 ----
+    // junction 落点就地覆盖会穿透写源（影响全部安装点）；copy 落点是分发副本，
+    // 覆盖会与其他安装分叉。即使「原地替换 A/B」（a_is_merged/b_is_merged）也拦截。
+    if let Some(hit) = ledger_hit_target(&ledger, &merged_dir) {
+        let kind_cn = match hit.mode {
+            crate::hub::LedgerMode::Link => "链接（junction）",
+            crate::hub::LedgerMode::Copy => "副本",
+        };
+        return Err(format!(
+            "合并落点 {} 是 Hub 引用的{}目录（{} → {}），合并会穿透写源或分叉副本。请改一个落点，或先去 Hub 处理该引用。",
+            merged_dir.display(),
+            kind_cn,
+            hit.skill_name,
+            hit.target_tool,
+        ));
     }
 
     // ---- 落点存在性检查（EXISTS 语义）----
@@ -599,8 +633,43 @@ mod merge_tests {
     }
 
     #[test]
-    fn history_roundtrip() {
+    fn ledger_hit_target_detects_hub_dirs() {
+        // 冲突点 C3：合并落点命中台账 target（Link/Copy 均识别），普通目录不误伤
         let tmp = tempfile::tempdir().unwrap();
+        let link_dir = tmp.path().join("link-loc");
+        let copy_dir = tmp.path().join("copy-loc");
+        let free_dir = tmp.path().join("free");
+        for d in [&link_dir, &copy_dir, &free_dir] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        let mk = |id: &str, mode: crate::hub::LedgerMode, target: &str| crate::hub::HubLink {
+            id: id.into(),
+            skill_name: "demo".into(),
+            display_name: String::new(),
+            source: "/tmp/src/demo".into(),
+            target: target.into(),
+            target_tool: "codex".into(),
+            mode,
+            created_at: String::new(),
+        };
+        let ledger = crate::hub::LinksLedger {
+            version: 1,
+            links: vec![
+                mk("l1", crate::hub::LedgerMode::Link, &link_dir.to_string_lossy()),
+                mk("l2", crate::hub::LedgerMode::Copy, &copy_dir.to_string_lossy()),
+            ],
+        };
+        assert!(ledger_hit_target(&ledger, &link_dir).is_some(), "Link 落点命中");
+        assert!(ledger_hit_target(&ledger, &copy_dir).is_some(), "Copy 落点命中");
+        assert!(ledger_hit_target(&ledger, &free_dir).is_none(), "普通目录不命中");
+        assert!(
+            ledger_hit_target(&ledger, &tmp.path().join("missing")).is_none(),
+            "不存在目录不命中"
+        );
+    }
+
+    #[test]
+    fn history_roundtrip() {
         // 用临时历史文件路径验证序列化契约（不碰全局 DATA_DIR）
         let rec = MergeRecord {
             id: "m-1".into(),

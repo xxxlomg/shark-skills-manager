@@ -1,5 +1,6 @@
 //! Zip 导入管线（PLAN-04 §3，Phase 1）。
-//! URL 导入（Phase 2）下载落盘后复用本模块的 preview/commit。
+//! URL 导入（Phase 2）下载落盘后复用本模块的 preview/commit；
+//! git clone 兜底统一走 `shelf::clone_repo_to_tmp`（收敛双 clone 通道，见 preview_via_clone）。
 
 use serde::Serialize;
 use std::collections::HashMap;
@@ -308,8 +309,12 @@ fn commit_from_dir(
 // ---------------------------------------------------------------------------
 
 enum PendingSource {
-    Zip(PathBuf, tempfile::TempDir, String),
-    Dir(tempfile::TempDir, String),
+    /// zip 下载缓存（zip 路径 + 所属 App tmp 目录）；commit 结束后显式清理，
+    /// 取消预览的残留由 App 启动即清兜底（PLAN-06 §1.8 三重保险，不用系统 TEMP）。
+    Zip(PathBuf, PathBuf, String),
+    /// clone 目录本体（落 App tmp 区，非 RAII）；commit 结束后显式清理，
+    /// 用户取消预览的残留由 App 启动即清兜底（PLAN-06 §1.8 三重保险）。
+    Dir(PathBuf, String),
 }
 
 static PENDING: LazyLock<Mutex<HashMap<String, PendingSource>>> =
@@ -476,15 +481,42 @@ pub async fn preview_url(url: &str) -> Result<ImportPreview, String> {
     }
 }
 
+/// 新建 App tmp 子目录（与 shelf::new_repo_dir 同模式；前缀 zip-，启动即清区）。
+fn new_tmp_dir() -> std::io::Result<PathBuf> {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static SEQ: AtomicU32 = AtomicU32::new(0);
+    let dir = crate::config::get_data_dir().join("tmp").join(format!(
+        "zip-{}-{}",
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir)
+}
+
 fn try_archive_urls(try_urls: &[String], original_url: &str) -> Result<ImportPreview, String> {
     let mut last_err = String::new();
     for u in try_urls {
         match http_get(u) {
             Ok(bytes) if is_zip(&bytes) => {
-                let tmp = tempfile::tempdir().map_err(|e| e.to_string())?;
-                let zip_file = tmp.path().join("download.zip");
-                fs::write(&zip_file, &bytes).map_err(|e| e.to_string())?;
-                let mut preview = preview_zip(&zip_file)?;
+                // 收口双临时区（与 clone 通道同约定）：落 App tmp（启动即清），不用系统 TEMP
+                let tmp = match new_tmp_dir() {
+                    Ok(d) => d,
+                    Err(e) => return Err(format!("创建临时目录失败: {e}")),
+                };
+                let zip_file = tmp.join("download.zip");
+                if let Err(e) = fs::write(&zip_file, &bytes) {
+                    let _ = fs::remove_dir_all(&tmp);
+                    return Err(e.to_string());
+                }
+                let mut preview = match preview_zip(&zip_file) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        // 预览失败不注册 token：删缓存目录保零残留
+                        let _ = fs::remove_dir_all(&tmp);
+                        return Err(e);
+                    }
+                };
                 preview.default_stem = stem_from_url(original_url);
                 preview.token = Some(register_token(PendingSource::Zip(
                     zip_file,
@@ -505,26 +537,24 @@ async fn preview_via_clone(url: &str, archive_err: &str) -> Result<ImportPreview
     if !crate::git::detect().installed {
         return Err(format!("{}；且本机无 git 可兜底", archive_err));
     }
-    let tmp = tempfile::tempdir().map_err(|e| e.to_string())?;
-    let clone_dir = tmp.path().join("repo");
-    if let Err(e) = crate::git::run(
-        None,
-        &[
-            "clone",
-            "--depth",
-            "1",
-            "--single-branch",
-            url,
-            clone_dir.to_string_lossy().as_ref(),
-        ],
-    )
-    .await
-    {
-        return Err(format!("{}；git clone 亦失败: {}", archive_err, e.message()));
-    }
+    // 收敛双 clone 通道（PLAN-06 §1.8）：统一走 shelf::clone_repo_to_tmp——
+    // 落 <data_dir>/tmp（App 启动即清）并带 500MB 体积闸，不再用系统 TEMP。
+    let clone_dir = crate::shelf::clone_repo_to_tmp(url)
+        .await
+        .map_err(|e| format!("{}；git clone 亦失败: {}", archive_err, e))?;
     let root = unwrap_single_dir(&clone_dir);
-    let mut preview = preview_dir(&root, &stem_from_url(url))?;
-    preview.token = Some(register_token(PendingSource::Dir(tmp, url.to_string())));
+    let mut preview = match preview_dir(&root, &stem_from_url(url)) {
+        Ok(p) => p,
+        Err(e) => {
+            // 预览失败不注册 token：删 clone 目录保零残留
+            let _ = fs::remove_dir_all(&clone_dir);
+            return Err(format!("{}；git clone 亦失败: {}", archive_err, e));
+        }
+    };
+    preview.token = Some(register_token(PendingSource::Dir(
+        clone_dir,
+        url.to_string(),
+    )));
     Ok(preview)
 }
 
@@ -542,14 +572,25 @@ pub fn commit_url_import(
         .ok_or_else(|| "预览凭证已失效，请重新解析".to_string())?;
     match pending {
         PendingSource::Zip(zip, tmp, url) => {
-            let extracted = tmp.path().join("extracted");
-            extract_safely(&zip, &extracted)?;
-            let root = unwrap_single_dir(&extracted);
-            commit_from_dir(&root, stem, selected, replace, target_base, &url, "url-zip")
+            let extracted = tmp.join("extracted");
+            let result = (|| {
+                extract_safely(&zip, &extracted)?;
+                let root = unwrap_single_dir(&extracted);
+                commit_from_dir(&root, stem, selected, replace, target_base, &url, "url-zip")
+            })();
+            // 无论成败都清理 zip 缓存目录（普通目录，非链接；remove_dir_all 安全），
+            // 与 shelf 通道同一生命周期约定（操作结束即删 + 启动即清兜底）。
+            let _ = fs::remove_dir_all(&tmp);
+            result
         }
-        PendingSource::Dir(tmp, url) => {
-            let root = unwrap_single_dir(&tmp.path().join("repo"));
-            commit_from_dir(&root, stem, selected, replace, target_base, &url, "url-git")
+        PendingSource::Dir(clone_dir, url) => {
+            let root = unwrap_single_dir(&clone_dir);
+            let result =
+                commit_from_dir(&root, stem, selected, replace, target_base, &url, "url-git");
+            // 无论成败都清理 clone 目录（普通目录，非链接；remove_dir_all 安全），
+            // 与 shelf 通道同一生命周期约定（操作结束即删 + 启动即清兜底）。
+            let _ = fs::remove_dir_all(&clone_dir);
+            result
         }
     }
 }

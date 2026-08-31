@@ -3,29 +3,24 @@ import {
   Key,
   Globe,
   Cpu,
+  Brain,
+  Gauge,
   Save,
   Trash2,
   Eye,
   EyeOff,
   Wifi,
   FolderOpen,
-  Plus,
-  ToggleLeft,
-  ToggleRight,
-  AlertTriangle,
   Palette,
-  Check,
   Settings2,
-  Link2,
   Store,
-  GitBranch,
-  PanelTop,
-  PanelLeft,
 } from "lucide-react";
 import { toast } from "sonner";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { isMockMode } from "@/mock";
-import { toolDisplayName } from "@/hooks/useSkills";
+import { ToolsSection } from "./ToolsSection";
+import { RepoSection } from "./RepoSection";
+import { AppearanceSection } from "./AppearanceSection";
 import {
   Dialog,
   DialogContent,
@@ -35,13 +30,20 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Tip } from "@/components/common/Tip";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import {
   loadLLMConfig,
   saveLLMConfig,
   LLM_DEFAULTS,
 } from "@/lib/llm-config";
+import type { ThinkingMode, ReasoningEffort } from "@/lib/llm-config";
 import {
   hubListTools,
   hubAddTool,
@@ -60,7 +62,7 @@ import type { GitStatusInfo } from "@/lib/api";
 import { invoke } from "@tauri-apps/api/core";
 import type { MaskedConfig } from "@/lib/api";
 import { testLLMConnection } from "@/lib/ai";
-import { ACCENTS, getAccent, setAccent, type AccentId } from "@/lib/accent";
+import { getAccent, setAccent, type AccentId } from "@/lib/accent";
 
 interface SettingsDialogProps {
   open: boolean;
@@ -89,6 +91,8 @@ export function SettingsDialog({ open, onOpenChange, onSaved, navMode, onNavMode
   const [apiKey, setApiKey] = useState("");
   const [baseUrl, setBaseUrl] = useState(LLM_DEFAULTS.baseUrl);
   const [model, setModel] = useState(LLM_DEFAULTS.model);
+  const [thinking, setThinking] = useState<ThinkingMode>(LLM_DEFAULTS.thinking);
+  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>(LLM_DEFAULTS.reasoningEffort);
   const [showKey, setShowKey] = useState(false);
   const [hasExisting, setHasExisting] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -127,7 +131,13 @@ export function SettingsDialog({ open, onOpenChange, onSaved, navMode, onNavMode
     const loadMasked = (): Promise<MaskedConfig> => {
       if (isMockMode()) {
         return Promise.resolve({
-          llm: { api_key: "", base_url: LLM_DEFAULTS.baseUrl, model: LLM_DEFAULTS.model },
+          llm: {
+            api_key: "",
+            base_url: LLM_DEFAULTS.baseUrl,
+            model: LLM_DEFAULTS.model,
+            thinking: "disabled",
+            reasoning_effort: "low",
+          },
           _has_key: false,
           publish_repo: {
             local_path: "D:\\mock\\my-skill-repo",
@@ -150,6 +160,8 @@ export function SettingsDialog({ open, onOpenChange, onSaved, navMode, onNavMode
         }
         setBaseUrl(config.baseUrl || LLM_DEFAULTS.baseUrl);
         setModel(config.model || LLM_DEFAULTS.model);
+        setThinking(config.thinking);
+        setReasoningEffort(config.reasoningEffort);
         setTools(toolList);
         setRepoLocalPath(masked.publish_repo?.local_path ?? "");
         setRepoRemoteUrl(masked.publish_repo?.remote_url ?? "");
@@ -181,6 +193,8 @@ export function SettingsDialog({ open, onOpenChange, onSaved, navMode, onNavMode
         apiKey: apiKey.trim(),
         baseUrl: baseUrl.trim() || LLM_DEFAULTS.baseUrl,
         model: model.trim() || LLM_DEFAULTS.model,
+        thinking,
+        reasoningEffort,
       });
       setHasExisting(true);
       toast.success("配置已保存");
@@ -190,7 +204,7 @@ export function SettingsDialog({ open, onOpenChange, onSaved, navMode, onNavMode
       const msg = err instanceof Error ? err.message : String(err);
       toast.error(`保存失败：${msg}`);
     }
-  }, [apiKey, baseUrl, model, onOpenChange, onSaved, loaded]);
+  }, [apiKey, baseUrl, model, thinking, reasoningEffort, onOpenChange, onSaved, loaded]);
 
   const handleClear = useCallback(async () => {
     try {
@@ -198,10 +212,14 @@ export function SettingsDialog({ open, onOpenChange, onSaved, navMode, onNavMode
         apiKey: "",
         baseUrl: LLM_DEFAULTS.baseUrl,
         model: LLM_DEFAULTS.model,
+        thinking: LLM_DEFAULTS.thinking,
+        reasoningEffort: LLM_DEFAULTS.reasoningEffort,
       });
       setApiKey("");
       setBaseUrl(LLM_DEFAULTS.baseUrl);
       setModel(LLM_DEFAULTS.model);
+      setThinking(LLM_DEFAULTS.thinking);
+      setReasoningEffort(LLM_DEFAULTS.reasoningEffort);
       setHasExisting(false);
       toast.success("LLM 配置已清除");
     } catch {
@@ -220,6 +238,8 @@ export function SettingsDialog({ open, onOpenChange, onSaved, navMode, onNavMode
         apiKey: apiKey.trim(),
         baseUrl: baseUrl.trim() || LLM_DEFAULTS.baseUrl,
         model: model.trim() || LLM_DEFAULTS.model,
+        thinking,
+        reasoningEffort,
       });
       toast.success("连接成功，API 可用");
     } catch (err: unknown) {
@@ -228,7 +248,7 @@ export function SettingsDialog({ open, onOpenChange, onSaved, navMode, onNavMode
     } finally {
       setTesting(false);
     }
-  }, [apiKey, baseUrl, model]);
+  }, [apiKey, baseUrl, model, thinking, reasoningEffort]);
 
   // ---- 工具管理操作（全部即时保存，不经底部「保存」按钮）----
 
@@ -528,6 +548,52 @@ export function SettingsDialog({ open, onOpenChange, onSaved, navMode, onNavMode
                   />
                 </div>
 
+                <div className="space-y-1.5">
+                  <label className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+                    <Brain className="h-3.5 w-3.5" />
+                    思考模式
+                  </label>
+                  <Select value={thinking} onValueChange={(v) => setThinking(v as ThinkingMode)}>
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="disabled">关闭（默认）</SelectItem>
+                      <SelectItem value="enabled">开启</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+                    <Gauge className="h-3.5 w-3.5" />
+                    思考强度
+                    {thinking !== "enabled" && (
+                      <span className="text-xs text-muted-foreground font-normal">
+                        （需先开启思考模式）
+                      </span>
+                    )}
+                  </label>
+                  <Select
+                    value={reasoningEffort}
+                    onValueChange={(v) => setReasoningEffort(v as ReasoningEffort)}
+                    disabled={thinking !== "enabled"}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="low">低（默认）</SelectItem>
+                      <SelectItem value="high">中</SelectItem>
+                      <SelectItem value="max">高</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <p className="text-[11px] text-text-tertiary">
+                  💡 思考模式与强度仅对 DeepSeek 端点生效；其他端点会自动忽略这两个参数。
+                </p>
+
                 <div className="flex items-center gap-2 pt-1">
                   <Button
                     variant="outline"
@@ -563,446 +629,58 @@ export function SettingsDialog({ open, onOpenChange, onSaved, navMode, onNavMode
 
             {/* 工具管理 */}
             {section === "tools" && (
-              <>
-                <p className="text-xs text-muted-foreground">
-                  工具即扫描来源，也是 Hub 引用落点。内置工具只能启用/禁用；自定义工具可增删。改动即时保存。
-                </p>
-
-                {/* 工具列表 */}
-                <div className="space-y-2">
-                  {tools.length === 0 && (
-                    <p className="text-sm text-muted-foreground text-center py-4">
-                      暂无工具
-                    </p>
-                  )}
-                  {tools.map((t) => {
-                    const existsAny = t.path_exists.some(Boolean);
-                    const badge = t.app_owned
-                      ? "应用自有"
-                      : t.builtin
-                        ? "内置"
-                        : "自定义";
-                    return (
-                      <div
-                        key={t.id}
-                        className={`flex items-start gap-2 rounded-lg border p-2 transition-colors ${
-                          !t.app_owned && !existsAny
-                            ? "border-amber-300 bg-amber-50/50 dark:bg-amber-950/20"
-                            : "border-border"
-                        }`}
-                      >
-                        <Tip label={t.enabled ? "点击禁用" : "点击启用"}>
-                          <button
-                            type="button"
-                            onClick={() => handleToggleTool(t)}
-                            className="shrink-0 text-muted-foreground hover:text-foreground mt-0.5"
-                          >
-                            {t.enabled ? (
-                              <ToggleRight className="h-[26px] w-[26px] text-green-500" />
-                            ) : (
-                              <ToggleLeft className="h-[26px] w-[26px]" />
-                            )}
-                          </button>
-                        </Tip>
-                        <div className="flex-1 min-w-0">
-                          <p className="flex items-center gap-2 text-sm font-medium">
-                            <span className="truncate">{toolDisplayName(t.name)}</span>
-                            <span className="shrink-0 rounded border border-border px-1 py-px text-[10px] text-muted-foreground">
-                              {badge}
-                            </span>
-                            {t.link_count > 0 && (
-                              <span className="flex shrink-0 items-center gap-0.5 rounded border border-brand/40 bg-brand/10 px-1 py-px text-[10px] text-brand">
-                                <Link2 className="h-2.5 w-2.5" />
-                                {t.link_count} 条引用
-                              </span>
-                            )}
-                          </p>
-                          {t.app_owned ? (
-                            <p className="text-xs text-muted-foreground mt-0.5">
-                              路径由应用管理（{t.id === "builtin" ? "内置技能" : "导入安装的技能"}）
-                            </p>
-                          ) : (
-                            <div className="mt-0.5 space-y-px">
-                              {t.paths.map((p, i) => (
-                                <p
-                                  key={i}
-                                  className="flex items-center gap-1.5 text-xs text-muted-foreground"
-                                >
-                                  <span
-                                    className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${
-                                      t.path_exists[i]
-                                        ? "bg-green-500"
-                                        : "bg-stroke-hi"
-                                    }`}
-                                  />
-                                  <span className="truncate">{p}</span>
-                                </p>
-                              ))}
-                            </div>
-                          )}
-                          {!t.app_owned && !existsAny && (
-                            <p className="flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400 mt-0.5">
-                              <AlertTriangle className="h-3 w-3" />
-                              候选目录均不存在（引用时将自动创建首个候选）
-                            </p>
-                          )}
-                        </div>
-                        {!t.builtin && !t.app_owned && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7 shrink-0 text-destructive hover:text-destructive"
-                            onClick={() => setRemoving(t)}
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {/* 导入工具包（文件选择器交互）：选目录 → 自动探测 skills → 有效才可导入 */}
-                <div className="space-y-2 rounded-lg border border-dashed border-border p-3">
-                  <p className="text-xs font-medium text-muted-foreground">
-                    导入工具包（可作为 Hub 引用落点）
-                  </p>
-                  <p className="text-[11px] text-text-tertiary">
-                    选择包含 skills 子文件夹的文件夹，应用将自动识别为有效工具包并登记为自定义工具。
-                  </p>
-
-                  {isMockMode() ? (
-                    <div className="flex gap-2">
-                      <Input
-                        type="text"
-                        placeholder="输入工具包路径，如 D:\vault\my-tool\skills"
-                        value={mockDir}
-                        onChange={(e) => setMockDir(e.target.value)}
-                        className="text-xs"
-                        disabled={probeBusy || importing}
-                      />
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={handleMockDetect}
-                        className="shrink-0 text-xs"
-                        disabled={probeBusy || importing || !mockDir.trim()}
-                      >
-                        检测
-                      </Button>
-                    </div>
-                  ) : (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={handlePickToolDir}
-                      className="w-full text-xs"
-                      disabled={!loaded || probeBusy || importing}
-                    >
-                      <FolderOpen className="mr-1 h-3 w-3" />
-                      {probeBusy ? "检测中…" : "选择工具包文件夹…"}
-                    </Button>
-                  )}
-
-                  {/* 探测失败（invoke 异常） */}
-                  {!probeBusy && probeError && (
-                    <p className="flex items-start gap-1.5 rounded-lg border border-red-300 bg-red-50/50 p-2.5 text-xs text-red-600 dark:border-red-900 dark:bg-red-950/20 dark:text-red-400">
-                      <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                      <span>{probeError}</span>
-                    </p>
-                  )}
-
-                  {/* 目录无效：不满足工具包要求 */}
-                  {!probeBusy && probe && !probe.has_skills && (
-                    <div className="space-y-1 rounded-lg border border-red-300 bg-red-50/50 p-2.5 dark:border-red-900 dark:bg-red-950/20">
-                      <p className="flex items-start gap-1.5 text-xs text-red-600 dark:text-red-400">
-                        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                        <span>
-                          {probe.base_exists
-                            ? "该目录不符合工具包要求：未找到 skills 子文件夹"
-                            : "该目录不存在，无法识别为工具包"}
-                        </span>
-                      </p>
-                      <p className="pl-5 text-[11px] text-red-500/80 dark:text-red-400/80">
-                        若选中的是 skills 目录本身，请选择其父文件夹重试。
-                      </p>
-                    </div>
-                  )}
-
-                  {/* 目录有效：识别为工具包，可一键导入 */}
-                  {!probeBusy && probe?.has_skills && (
-                    <div className="space-y-2 rounded-lg border border-green-500/40 bg-green-50/50 p-2.5 dark:border-green-900 dark:bg-green-950/20">
-                      <p className="flex items-start gap-1.5 text-xs text-green-700 dark:text-green-400">
-                        <Check className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                        <span className="break-all">
-                          已识别为有效工具包，skills 目录：
-                          <span className="font-mono">{probe.skills_path}</span>
-                        </span>
-                      </p>
-                      <Input
-                        type="text"
-                        placeholder="工具名称"
-                        value={importName}
-                        onChange={(e) => setImportName(e.target.value)}
-                        className="text-xs"
-                        disabled={importing}
-                      />
-                      <Button
-                        size="sm"
-                        onClick={handleImportTool}
-                        className="text-xs"
-                        disabled={importing || !importName.trim()}
-                      >
-                        <Plus className="mr-1 h-3 w-3" />
-                        {importing ? "导入中…" : "导入工具"}
-                      </Button>
-                    </div>
-                  )}
-                </div>
-
-                {/* P5 下载/导入路径 */}
-                <div className="space-y-2 rounded-lg border border-border p-3">
-                  <p className="text-xs font-medium text-muted-foreground">
-                    下载/导入路径
-                  </p>
-                  <p className="text-[11px] text-text-tertiary">
-                    URL 下载、Pack 安装、zip/目录导入的技能存放目录。留空使用默认。
-                  </p>
-                  <div className="flex gap-2">
-                    <Input
-                      type="text"
-                      placeholder="D:\skills-downloads （留空 = 默认）"
-                      value={downloadDir}
-                      onChange={(e) => setDownloadDirState(e.target.value)}
-                      className="text-xs"
-                    />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={handleDownloadDirPick}
-                      className="shrink-0"
-                    >
-                      选择…
-                    </Button>
-                  </div>
-                  <div className="flex gap-2">
-                    <Button
-                      type="button"
-                      size="sm"
-                      onClick={handleSaveDownloadDir}
-                      disabled={downloadDirSaving || !loaded}
-                    >
-                      {downloadDirSaving ? "保存中…" : "保存路径"}
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={handleResetDownloadDir}
-                      disabled={downloadDirSaving || !loaded}
-                      className="text-text-tertiary"
-                    >
-                      恢复默认
-                    </Button>
-                  </div>
-                </div>
-              </>
+              <ToolsSection
+              tools={tools}
+              loaded={loaded}
+              onToggle={handleToggleTool}
+              onRemove={setRemoving}
+              probe={probe}
+              probeError={probeError}
+              probeBusy={probeBusy}
+              importName={importName}
+              onImportNameChange={setImportName}
+              importing={importing}
+              mockDir={mockDir}
+              onMockDirChange={setMockDir}
+              onPickDir={handlePickToolDir}
+              onMockDetect={handleMockDetect}
+              onImport={handleImportTool}
+              downloadDir={downloadDir}
+              onDownloadDirChange={setDownloadDirState}
+              downloadDirSaving={downloadDirSaving}
+              onPickDownloadDir={handleDownloadDirPick}
+              onSaveDownloadDir={handleSaveDownloadDir}
+              onResetDownloadDir={handleResetDownloadDir}
+            />
             )}
 
             {/* 技能仓库（模块 A 发布侧） */}
             {section === "repo" && (
-              <>
-                <p className="text-xs text-muted-foreground">
-                  发布 Pack 到你的「技能货架」仓库。凭据完全走你自己的 git 配置
-                  （SSH / credential manager），App 不碰任何凭据。
-                </p>
-
-                <div className="space-y-1.5">
-                  <label className="flex items-center gap-1.5 text-sm font-medium text-foreground">
-                    <FolderOpen className="h-3.5 w-3.5" />
-                    本地仓库路径
-                  </label>
-                  <div className="flex gap-2">
-                    <Input
-                      type="text"
-                      placeholder="D:\my-skill-repo"
-                      value={repoLocalPath}
-                      onChange={(e) => setRepoLocalPath(e.target.value)}
-                    />
-                    <Tip label="选择文件夹">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={handleRepoPick}
-                        className="shrink-0 px-2.5"
-                        aria-label="选择文件夹"
-                      >
-                        <FolderOpen className="h-4 w-4" />
-                      </Button>
-                    </Tip>
-                  </div>
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="flex items-center gap-1.5 text-sm font-medium text-foreground">
-                    <GitBranch className="h-3.5 w-3.5" />
-                    远端 URL
-                  </label>
-                  <Input
-                    type="text"
-                    placeholder="https://github.com/you/my-skill-repo.git（仓库须已存在）"
-                    value={repoRemoteUrl}
-                    onChange={(e) => setRepoRemoteUrl(e.target.value)}
-                  />
-                  <p className="text-[11px] text-text-tertiary">
-                    App 不代建远程仓库：先去 GitHub/Gitee 建一个空仓库，把 URL 贴进来。
-                  </p>
-                </div>
-
-                <div className="flex gap-2">
-                  <Button
-                    type="button"
-                    size="sm"
-                    onClick={() => handleRepoSetup(true)}
-                    disabled={repoBusy || !loaded}
-                  >
-                    {repoBusy ? "处理中…" : "初始化新仓库"}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handleRepoSetup(false)}
-                    disabled={repoBusy || !loaded}
-                  >
-                    校验已有仓库
-                  </Button>
-                  {repoStatus?.repo_configured && (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={handleRepoClear}
-                      disabled={repoBusy}
-                      className="ml-auto text-text-tertiary"
-                    >
-                      清除配置
-                    </Button>
-                  )}
-                </div>
-
-                {repoStatus?.repo_configured && (
-                  <div className="rounded-lg border border-stroke bg-glass-1 p-3 text-xs text-text-secondary space-y-1">
-                    <p className="flex items-center gap-1.5 font-medium text-foreground">
-                      <Store className="h-3.5 w-3.5 text-brand" />
-                      当前仓库状态
-                    </p>
-                    {repoStatus.repo_exists ? (
-                      <>
-                        <p>
-                          分支 <span className="font-mono">{repoStatus.branch}</span>
-                          {" · "}
-                          <span className="font-mono">
-                            {repoStatus.clean ? "工作区干净" : "有未提交改动"}
-                          </span>
-                          {repoStatus.ahead > 0 && ` · 领先远端 ${repoStatus.ahead} 个提交`}
-                          {repoStatus.behind > 0 && ` · 落后远端 ${repoStatus.behind} 个提交`}
-                        </p>
-                        <p className="text-text-tertiary font-mono break-all">
-                          {repoStatus.repo_path}
-                        </p>
-                      </>
-                    ) : (
-                      <p className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400">
-                        <AlertTriangle className="h-3.5 w-3.5" />
-                        配置的路径不存在或不是 git 仓库——点「初始化新仓库」修复
-                      </p>
-                    )}
-                  </div>
-                )}
-              </>
+              <RepoSection
+              loaded={loaded}
+              repoLocalPath={repoLocalPath}
+              onRepoLocalPathChange={setRepoLocalPath}
+              repoRemoteUrl={repoRemoteUrl}
+              onRepoRemoteUrlChange={setRepoRemoteUrl}
+              repoBusy={repoBusy}
+              repoStatus={repoStatus}
+              onPick={handleRepoPick}
+              onSetup={handleRepoSetup}
+              onClear={handleRepoClear}
+            />
             )}
 
             {/* 外观 */}
             {section === "appearance" && (
-              <>
-                <p className="text-xs text-muted-foreground">
-                  界面主题色，点击立即生效并自动保存。
-                </p>
-                <div className="grid grid-cols-2 gap-2">
-                  {ACCENTS.map((a) => (
-                    <button
-                      key={a.id}
-                      type="button"
-                      onClick={() => {
-                        setAccent(a.id);
-                        setAccentState(a.id);
-                      }}
-                      className={`flex items-center gap-2 rounded-lg border p-2.5 transition-colors ${
-                        accent === a.id
-                          ? "border-stroke-hi bg-glass-2"
-                          : "border-border hover:border-stroke-hi"
-                      }`}
-                    >
-                      <span className="flex shrink-0 -space-x-1.5">
-                        <span
-                          className="h-4 w-4 rounded-full ring-1 ring-black/20"
-                          style={{ background: a.dark }}
-                        />
-                        <span
-                          className="h-4 w-4 rounded-full ring-1 ring-white/40"
-                          style={{ background: a.light }}
-                        />
-                      </span>
-                      <span className="text-sm text-foreground">{a.name}</span>
-                      {accent === a.id && (
-                        <Check className="ml-auto h-4 w-4 text-[var(--accent)]" />
-                      )}
-                    </button>
-                  ))}
-                </div>
-
-                {/* PLAN-10 P2：全局布局切换（立即生效并自动保存） */}
-                <div className="space-y-1.5 border-t border-stroke pt-3">
-                  <p className="text-sm font-medium text-foreground">
-                    导航布局
-                  </p>
-                  <p className="text-[11px] text-text-tertiary">
-                    侧栏模式在左侧常驻主视图菜单与技能库目录树，深层级技能查看时可直达任意层级。
-                  </p>
-                  <div className="grid grid-cols-2 gap-2">
-                    {(
-                      [
-                        { id: "top", label: "顶栏", icon: PanelTop },
-                        { id: "sidebar", label: "侧栏", icon: PanelLeft },
-                      ] as const
-                    ).map((opt) => {
-                      const Icon = opt.icon;
-                      const active = (navMode ?? "top") === opt.id;
-                      return (
-                        <button
-                          key={opt.id}
-                          type="button"
-                          onClick={() => onNavModeChange?.(opt.id)}
-                          className={`flex items-center gap-2 rounded-lg border p-2.5 text-sm transition-colors ${
-                            active
-                              ? "border-stroke-hi bg-glass-2 text-foreground"
-                              : "border-border text-text-secondary hover:border-stroke-hi hover:text-text-primary"
-                          }`}
-                        >
-                          <Icon className="h-4 w-4" />
-                          {opt.label}
-                          {active && (
-                            <Check className="ml-auto h-4 w-4 text-[var(--accent)]" />
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              </>
+              <AppearanceSection
+              accent={accent}
+              onAccentChange={(a) => {
+                setAccent(a);
+                setAccentState(a);
+              }}
+              navMode={navMode}
+              onNavModeChange={onNavModeChange}
+            />
             )}
           </div>
         </div>

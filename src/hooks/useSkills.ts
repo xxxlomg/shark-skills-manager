@@ -2,7 +2,7 @@
  * Skills 数据 Hook — 通过 Tauri invoke 扫描 + 前端分组
  */
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { MOCK_SKILLS, isMockMode } from "@/mock";
 
@@ -135,23 +135,40 @@ export function useSkills() {
   const [skills, setSkills] = useState<Skill[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // 软合并（coalescing）：一次扫描在途期间的新 refresh 只标记重跑，
+  // 上一次结束后合入执行一次——连续 N 次 refresh 最多扫 2 次，
+  // 且最终状态不丢（保存/翻译连击不再触发全量重扫风暴）。
+  const inflightRef = useRef(false);
+  const rerunRef = useRef(false);
 
   const refresh = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+    if (inflightRef.current) {
+      rerunRef.current = true; // 排队：当前扫描结束后合入再扫一次
+      return;
+    }
+    inflightRef.current = true;
     try {
-      if (isMockMode()) {
-        await new Promise((r) => setTimeout(r, 250));
-        // 浅拷贝新引用：MOCK_SKILLS 可变（CRUD mock 直接增删），同引用 React 不重渲染
-        setSkills([...MOCK_SKILLS]);
-        return;
-      }
-      const data = await invoke<Skill[]>("scan_skills");
-      setSkills(data);
-    } catch (err: any) {
-      setError(err?.message ?? String(err));
+      do {
+        rerunRef.current = false;
+        setLoading(true);
+        setError(null);
+        try {
+          if (isMockMode()) {
+            await new Promise((r) => setTimeout(r, 250));
+            // 浅拷贝新引用：MOCK_SKILLS 可变（CRUD mock 直接增删），同引用 React 不重渲染
+            setSkills([...MOCK_SKILLS]);
+          } else {
+            const data = await invoke<Skill[]>("scan_skills");
+            setSkills(data);
+          }
+        } catch (err: any) {
+          setError(err?.message ?? String(err));
+        } finally {
+          setLoading(false);
+        }
+      } while (rerunRef.current);
     } finally {
-      setLoading(false);
+      inflightRef.current = false;
     }
   }, []);
 

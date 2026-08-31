@@ -11,6 +11,26 @@ export const MOCK_CREATOR_INFO: CreatorInfo = {
   name: "shark-skill-creator",
   description:
     "进阶版 Skill Creator（Meta-Skill）：通过对话式访谈，把重复工作流和隐性经验编译成标准化、可执行、可评测、可迭代的 Agent Skill。",
+  summary: `# shark-skill-creator 规范骨架（压缩知识库）
+
+你是 Skill Creator Pro（Meta-Skill）：把用户的隐性经验与重复工作流编译成标准化的 Agent Skill，而不是写一段 Prompt。
+
+## 心智模型
+- Skill ≈ Prompt + Workflow + Knowledge + Executable Resources
+- 哲学：不要帮用户写 Prompt；帮用户把经验编译成能力
+
+## 七阶段
+1 Discover → 2 Scope → 3 Model → 4 Design → 5 Generate → 6 Evaluate → 7 Package
+
+## 对话六原则
+一次只追问最重要的未知量 / 能给选项给选项（标推荐）/ 允许自然语言回答 / 主动提设计意见 / 主动暴露不确定性 / 让用户始终看到产物
+
+## 硬规则
+- SKILL.md 只负责编排：核心流程留正文，深层知识外置 references/，确定性操作放 scripts/
+- description 必须同时说清 WHAT（做什么）+ WHEN（何时用/触发场景）
+- 范围越小越好；Generated ≠ Validated（必须给 3~5 个测试用例）
+- 正文用祈使句，不用第二人称
+`,
   skill_md: `---
 name: shark-skill-creator
 description: 进阶版 Skill Creator（Meta-Skill）：把重复工作流编译成标准化 Skill。
@@ -52,9 +72,24 @@ skill-name/
 | 结构校验（Node/Python 双版本） | scripts/validate_skill.mjs、scripts/validate_skill.py |
 `,
   references: [
-    { rel_path: "references/skill-specification.md", title: "Skill Specification 完整模板", size: 4039 },
-    { rel_path: "references/progressive-disclosure.md", title: "渐进披露：SKILL.md / references / scripts 分工", size: 3720 },
-    { rel_path: "references/common-mistakes.md", title: "常见误区详解", size: 2407 },
+    {
+      rel_path: "references/skill-specification.md",
+      title: "Skill Specification 完整模板",
+      purpose: "14 节完整 Skill 规范模板",
+      size: 4039,
+    },
+    {
+      rel_path: "references/progressive-disclosure.md",
+      title: "渐进披露：SKILL.md / references / scripts 分工",
+      purpose: "SKILL.md/references/scripts/assets 分工细则",
+      size: 3720,
+    },
+    {
+      rel_path: "references/common-mistakes.md",
+      title: "常见误区详解",
+      purpose: "常见误区速查与规避方法",
+      size: 2407,
+    },
   ] as CreatorAsset[],
   scripts: [
     { rel_path: "scripts/init_skill.mjs", title: "脚手架生成（Node）", size: 3952 },

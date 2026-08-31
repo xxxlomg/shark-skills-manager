@@ -1,36 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  ArrowLeft,
   CircleHelp,
-  Code2,
   Columns2,
-  Copy,
   Eye,
   FolderTree,
   Loader2,
   Maximize2,
   Minimize2,
-  PanelLeft,
-  Save,
   ScrollText,
-  Settings,
   ShieldCheck,
   Sparkles,
-  StopCircle,
-  X,
+  Square,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectLabel,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -39,21 +22,16 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import {
   Sheet,
   SheetContent,
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
-import { Tip } from "@/components/common/Tip";
 import { MarkdownPreview } from "@/components/common/MarkdownPreview";
 import { FileTree } from "./FileTree";
 import { SkillReviewPanel, type ReviewReportMeta } from "./SkillReviewPanel";
+import { SkillReviewBrief } from "./SkillReviewBrief";
 import {
   hubListTools,
   readSkillFile,
@@ -67,29 +45,37 @@ import {
   type ToolInfo,
   type ValidationReport,
 } from "@/lib/api";
-import { continueBodyStream, fixSkillStream, reviewSkillStream, type SkillReviewResult } from "@/lib/authoring-api";
+import { continueBodyStream, fixSkillStream, generateAttachmentDraftStream, extractAttachmentRefs, reviewSkillStream, summarizeSkillTitle, type SkillReviewResult } from "@/lib/authoring-api";
+import { sessionAppend, sessionLoad, sessionDelete, newSessionId, rememberSessionId, recallSessionId, forgetSessionId, eventsToMessages, type SessionEvent } from "@/lib/session-store";
 import { loadLLMConfig } from "@/lib/llm-config";
 import { isMockMode, MOCK_TOOLS } from "@/mock";
-import {
-  EMPTY_DRAFT,
-  NAME_RE,
-  clearDraft,
-  fmtSavedAt,
-  loadDraft,
-  storeDraft,
-  type StoredDraft,
-  type WbDraft,
-} from "@/lib/wb-draft";
+import { NAME_RE, fmtSavedAt, type WbDraft } from "@/lib/wb-draft";
+import { useWorkbenchDraft } from "@/hooks/useWorkbenchDraft";
 import {
   createDefaultCreationState,
   CreationStage,
   migrateWbDraftToCreationState,
   mergeWbDraftIntoCreationState,
+  type InterviewMessage,
   type SkillCreationState,
-  type ValidationSummary,
 } from "@/lib/creation-state";
 import { CreationGuidePanel } from "./CreationGuidePanel";
 import { InterviewGuide } from "./InterviewGuide";
+import { AuthoringHeader } from "./AuthoringHeader";
+import { DraftRestoreBanner } from "./DraftRestoreBanner";
+import { StreamPane } from "./StreamPane";
+import { AttachProposalDialog } from "./AttachProposalDialog";
+import {
+  appendPlatformMetadata,
+  buildAttachmentFiles,
+  buildDesc,
+  COMMON_EMOJI,
+  generateSkillName,
+  splitFrontmatter,
+  toValidationSummary,
+  yq,
+  type PreviewMode,
+} from "@/lib/authoring-utils";
 
 /**
  * 创作工作台（PLAN-08 精修第三轮）。
@@ -101,7 +87,6 @@ import { InterviewGuide } from "./InterviewGuide";
  */
 interface AuthoringWorkbenchProps {
   skill: Skill | null; // null = 新建态
-  skills: Skill[]; // 内容参考候选（全局扫描结果，按 scan_label 分组）
   /** 新建态落点预选（从技能库「在当前目录下创作」进入时带上工具名/ID） */
   initialLocation?: string | null;
   refresh: () => void;
@@ -109,186 +94,8 @@ interface AuthoringWorkbenchProps {
   onExit: () => void;
 }
 
-type PreviewMode = "edit" | "split" | "preview";
-
-function splitFrontmatter(md: string): { fm: string; body: string } | null {
-  if (!md.startsWith("---")) return null;
-  const rest = md.slice(3);
-  const idx = rest.indexOf("\n---");
-  if (idx < 0) return null;
-  return {
-    fm: rest.slice(0, idx).replace(/^\n/, ""),
-    body: rest.slice(idx + 4).replace(/^\n/, ""),
-  };
-}
-
-/**
- * 「我的描述」→ description。
- * PLAN-11 阶段 0：面板单输入，description 即「我的描述」(purpose)，不再拼「何时用」。
- */
-function buildDesc(d: WbDraft): string {
-  return d.purpose.trim();
-}
-
-/** YAML 标量安全引号（emoji 直拼 frontmatter 用；含特殊字符/空 → JSON 引号）。 */
-function yq(s: string): string {
-  if (s === "" || /[:#]|["'\\]|^\s|\s$/.test(s)) return JSON.stringify(s);
-  return s;
-}
-
-function appendPlatformMetadata(frontmatter: string, keywords: string[]): string {
-  const clean = keywords.map((item) => item.trim()).filter(Boolean);
-  const lines = frontmatter.replace(/\s+$/, "").split("\n");
-  const metadataAt = lines.findIndex((line) => line.trim() === "metadata:");
-  if (metadataAt < 0) {
-    return clean.length === 0
-      ? frontmatter
-      : [
-          ...lines,
-          "metadata:",
-          "  skills-shark:",
-          "    trigger_keywords:",
-          ...clean.map((keyword) => `      - ${yq(keyword)}`),
-        ].join("\n");
-  }
-
-  let metadataEnd = metadataAt + 1;
-  while (metadataEnd < lines.length && !/^[^\s]/.test(lines[metadataEnd])) {
-    metadataEnd++;
-  }
-  const metadataLines = lines.slice(metadataAt + 1, metadataEnd);
-  const withoutPlatform: string[] = [];
-  for (let i = 0; i < metadataLines.length; i++) {
-    if (metadataLines[i].trim() === "skills-shark:") {
-      i++;
-      while (i < metadataLines.length && /^\s{4}/.test(metadataLines[i])) i++;
-      i--;
-      continue;
-    }
-    withoutPlatform.push(metadataLines[i]);
-  }
-  if (clean.length === 0) {
-    return [
-      ...lines.slice(0, metadataAt + 1),
-      ...withoutPlatform,
-      ...lines.slice(metadataEnd),
-    ].join("\n");
-  }
-  const platformLines = [
-    "  skills-shark:",
-    "    trigger_keywords:",
-    ...clean.map((keyword) => `      - ${yq(keyword)}`),
-  ];
-  return [
-    ...lines.slice(0, metadataAt + 1),
-    ...withoutPlatform,
-    ...platformLines,
-    ...lines.slice(metadataEnd),
-  ].join("\n");
-}
-
-function toValidationSummary(report: ValidationReport): ValidationSummary {
-  const errorCount = report.issues.filter((issue) => issue.severity === "error").length;
-  const warningCount = report.issues.filter((issue) => issue.severity === "warn").length;
-  const infoCount = report.issues.filter((issue) => issue.severity === "info").length;
-  return {
-    mode: report.mode,
-    verdict: errorCount > 0 ? "fail" : warningCount > 0 ? "warn" : "pass",
-    errorCount,
-    warningCount,
-    infoCount,
-    issueCount: report.issues.length,
-    checkedAt: new Date().toISOString(),
-  };
-}
-
-/** emoji 快选网格（X5），可再自定义输入。 */
-const COMMON_EMOJI = [
-  "✍️",
-  "🧩",
-  "🛠️",
-  "🧪",
-  "📦",
-  "🔍",
-  "🌐",
-  "📊",
-  "🤖",
-  "📝",
-  "⚡",
-  "🔧",
-  "🧠",
-  "🚀",
-  "🗂️",
-  "🔔",
-  "🎯",
-  "📚",
-  "🧮",
-  "💾",
-];
-
-/** 根据描述自动生成 hyphen-case 技能名称（不重复） */
-function generateSkillName(description: string, existingName?: string): string {
-  // 如果用户已填写了合法名称，直接使用
-  if (existingName && NAME_RE.test(existingName)) return existingName;
-  // 从描述中提取英文单词
-  const words = description
-    .replace(/[^a-zA-Z0-9\s-]/g, " ")
-    .split(/\s+/)
-    .filter((w) => w.length > 1 && /^[a-zA-Z]/.test(w))
-    .slice(0, 3)
-    .map((w) => w.toLowerCase());
-  if (words.length > 0) {
-    return words.join("-").slice(0, 40);
-  }
-  // 中文描述：用时间戳生成唯一名称
-  const ts = Date.now().toString(36).slice(-6);
-  return `skill-${ts}`;
-}
-
-/**
- * 按 shark-skill-creator 规范构建标准附件清单（references/scripts/assets 三目录）。
- * 与旧 buildMissingFiles 的区别：不再依赖审查问题条件触发，而是始终产出
- * 规范要求的完整附件骨架，确保 SKILL.md 与附件同时生成。
- */
-function buildAttachmentFiles(
-  skillName: string,
-  description: string,
-): Array<{ path: string; content: string }> {
-  return [
-    {
-      path: "references/domain-knowledge.md",
-      content: `# ${skillName} 领域知识\n\n> 本文档存放技能执行所需的深层领域知识，供 SKILL.md 正文按需引用（渐进披露）。\n\n## 核心概念\n\n- ${description.slice(0, 80) || skillName}\n\n## 规则与约束\n\n- 待补充：根据实际使用场景添加领域规则。\n\n## 常见错误与处理\n\n- 待补充：记录常见失败场景及应对策略。\n`,
-    },
-    {
-      path: "references/guardrails.md",
-      content: `# ${skillName} 护栏规则\n\n> 本文档定义技能执行时必须遵守的规则和禁止行为。\n\n## 必须遵守（Must）\n\n- 输出前验证结果完整性\n- 信息不足时主动追问，不做假设\n\n## 禁止行为（Must Not）\n\n- 编造不存在的信息或数据\n- 超出技能范围处理不相关请求\n\n## 不确定时策略（Uncertainty Policy）\n\n- 如实说明不确定性\n- 提供可能的方向而非武断结论\n- 建议用户补充信息后重试\n`,
-    },
-    {
-      path: "scripts/validate_input.py",
-      content: `#!/usr/bin/env python3\n"""${skillName} 输入校验脚本。\n\n确定性操作：校验用户输入是否符合技能要求，不应交给 LLM 猜测。\n"""\nimport sys\n\n\ndef validate(input_text: str) -> tuple[bool, str]:\n    """校验输入是否有效。返回 (是否通过, 消息)。"""\n    if not input_text or not input_text.strip():\n        return False, "输入不能为空"\n    if len(input_text.strip()) < 5:\n        return False, "输入过短，请提供更完整的信息"\n    return True, "输入有效"\n\n\ndef main() -> int:\n    if len(sys.argv) < 2:\n        print("用法: python validate_input.py <input_text>")\n        return 1\n    ok, msg = validate(sys.argv[1])\n    print(msg)\n    return 0 if ok else 1\n\n\nif __name__ == "__main__":\n    sys.exit(main())\n`,
-    },
-    {
-      path: "assets/example-template.md",
-      content: `# ${skillName} 输出模板\n\n> 本模板定义技能输出的标准格式，确保结果一致性。\n\n## 输出结构\n\n\`\`\`markdown\n# [主题]\n\n## 摘要\n[一句话概括]\n\n## 详细分析\n[分点展开]\n\n## 建议\n[可操作的下一步]\n\`\`\`\n\n## 使用示例\n\n**输入**：示例输入内容\n**输出**：按上述模板格式化的结果\n`,
-    },
-  ];
-}
-
-/** 写作准则（X6 问号悬浮内容）。 */
-const GUIDELINES = (
-  <div className="flex flex-col gap-1">
-    <span>
-      · description 一句话说清「做什么 + 何时用」——模型只凭它决定是否使用
-    </span>
-    <span>· 正文祈使句书写，不用第二人称</span>
-    <span>· 长资料拆到 references/，正文保持精简</span>
-    <span>· name 用 hyphen-case，与目录名一致</span>
-  </div>
-);
-
 export function AuthoringWorkbench({
   skill,
-  skills,
   initialLocation,
   refresh,
   onOpenSettings,
@@ -297,14 +104,96 @@ export function AuthoringWorkbench({
   const [current, setCurrent] = useState<Skill | null>(skill);
   const draftId = current?.id ?? "new";
 
-  const [draft, setDraft] = useState<WbDraft>({ ...EMPTY_DRAFT });
+  // B3：附件提案——初稿落地后引导生成 references/scripts 真实内容（占位模板升级）
+  const [attOpen, setAttOpen] = useState(false);
+  const [attCandidates, setAttCandidates] = useState<string[]>([]);
+  const [attSelected, setAttSelected] = useState<Set<string>>(new Set());
+  const [attBusy, setAttBusy] = useState<string | null>(null);
+  const [attProgress, setAttProgress] = useState<{ i: number; total: number } | null>(null);
+  const [attVersion, setAttVersion] = useState(0);
+  const attContentsRef = useRef<Record<string, string>>({});
+  const attAbortRef = useRef<AbortController | null>(null);
+  /** 用户在 FileTree 内手工编辑过的文件内容（保存时统一落盘，无局部保存按钮） */
+  const editedFilesRef = useRef<Record<string, string>>({});
+  // T3：Agent 会话（事件溯源日志）——唯一 session id + id↔draft 映射（localStorage）
+  const sessionIdRef = useRef<string | null>(null);
+  const sessionEventsRef = useRef<SessionEvent[]>([]);
+  const ensureSession = useCallback(async (): Promise<string> => {
+    if (sessionIdRef.current) return sessionIdRef.current;
+    let sid = recallSessionId(draftId);
+    if (!sid) {
+      sid = newSessionId();
+      rememberSessionId(draftId, sid);
+      sessionEventsRef.current = await sessionLoad(sid);
+      if (sessionEventsRef.current.length === 0) {
+        await sessionAppend(sid, { kind: "session_created", content: draftId });
+      }
+    } else {
+      sessionEventsRef.current = await sessionLoad(sid);
+    }
+    sessionIdRef.current = sid;
+    return sid;
+  }, [draftId]);
+  const recordSession = useCallback(
+    (ev: SessionEvent) => {
+      void ensureSession().then((sid) => {
+        sessionEventsRef.current.push(ev);
+        void sessionAppend(sid, ev);
+      });
+    },
+    [ensureSession],
+  );
+
+  // C6：#1 历史对话加载——再次打开已创建 Skill 时，重放会话事件为聊天消息
+  // （含 AI 思考过程 reasoning，保证可回溯整个创作思路）
+  useEffect(() => {
+    let cancelled = false;
+    void ensureSession().then(() => {
+      if (cancelled) return;
+      const mapped: import("@/lib/creation-state").InterviewMessage[] = [];
+      for (const ev of sessionEventsRef.current) {
+        if (ev.kind === "user_msg") {
+          mapped.push({ id: `hist-${mapped.length}-u`, role: "user", content: ev.content });
+        } else if (ev.kind === "assistant_msg") {
+          mapped.push({
+            id: `hist-${mapped.length}-a`,
+            role: "assistant",
+            content: ev.content,
+            reasoning: ev.extra?.reasoning,
+          });
+        } else if (ev.kind === "generation_result") {
+          mapped.push({ id: `hist-${mapped.length}-g`, role: "assistant", content: "✅ 正文已生成（见编辑区）" });
+        } else if (ev.kind === "attachment_result") {
+          mapped.push({
+            id: `hist-${mapped.length}-f`,
+            role: "assistant",
+            content: `📎 已生成附件 ${ev.extra?.file ?? ""}`,
+          });
+        }
+      }
+      if (mapped.length > 0) {
+        guideMsgSeq.current = mapped.length;
+        setGuideMessages(mapped);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftId]);
   const [creationState, setCreationState] = useState<SkillCreationState>(() =>
     createDefaultCreationState({ id: skill?.id ?? null }),
   );
+  const creationStateRef = useRef(creationState);
+  useEffect(() => {
+    creationStateRef.current = creationState;
+  }, [creationState]);
+  // 草稿统一工具：dirty 判定 / 自动落盘 / 恢复 / 清理全部收敛到 Hook（不再散落判断）
+  const draftApi = useWorkbenchDraft(draftId, () => creationStateRef.current);
+  const { draft, dirty, stored } = draftApi;
+  const setDraftSilently = draftApi.setDraftSilently;
   const [validation, setValidation] = useState<ValidationReport | null>(null);
   const [origFm, setOrigFm] = useState("");
-  const [dirty, setDirty] = useState(false);
-  const [stored, setStored] = useState<StoredDraft | null>(null);
   const [location, setLocation] = useState("authored");
   const [tools, setTools] = useState<ToolInfo[]>([]);
   const [preview, setPreview] = useState<PreviewMode>("split");
@@ -313,27 +202,27 @@ export function AuthoringWorkbench({
   );
   const [busy, setBusy] = useState(false);
   const [confirmExit, setConfirmExit] = useState(false);
-  const [refSkillId, setRefSkillId] = useState("");
-  const [refContent, setRefContent] = useState("");
-  // 参考 pane：渲染/源码 视图切换 + 全屏预览（用户可全屏看、可复制 md 原文）
-  const [refView, setRefView] = useState<"render" | "raw">("render");
-  const [refFull, setRefFull] = useState(false);
-  // 中间编辑区可收起：收起后仅留左「我的描述」+ 右参考 pane
+  // 创作引导聊天消息（用户想法 + AI 状态回执）：状态上移，切换到访谈视图再切回也不丢失
+  const [guideMessages, setGuideMessages] = useState<InterviewMessage[]>([]);
+  const guideMsgSeq = useRef(0);
+  const pushGuideMessage = useCallback(
+    (role: InterviewMessage["role"], content: string) => {
+      guideMsgSeq.current += 1;
+      setGuideMessages((list) => [...list, { id: `gm-${guideMsgSeq.current}`, role, content }]);
+    },
+    [],
+  );
   const [editorOpen, setEditorOpen] = useState(true);
   // 编辑区全屏：覆盖层顶部保留完整工具栏（正文/附带资源 + 编辑/分栏/预览 + 还原）
   const [editorFull, setEditorFull] = useState(false);
-  // 参考全屏视图：渲染 / 源码 / 分栏（渲染+源码左右并列）
-  const [refFullView, setRefFullView] = useState<"render" | "raw" | "split">(
-    "render",
-  );
   // X4：AI 创作（顶栏按钮 + Dialog + 右侧流式预览）
   const [stream, setStream] = useState("");
+  const [thinkStream, setThinkStream] = useState("");
   const [streaming, setStreaming] = useState(false);
   // 右侧 pane 流式用途——create=一句话全文 / continue=续写正文（追加）
   // 用户「停止生成」的中止控制器：挂到 ref，供按钮 + 卸载时调用
   const aiAbortRef = useRef<AbortController | null>(null);
   const [streamDone, setStreamDone] = useState(false);
-  const [llmReady, setLlmReady] = useState(true);
   // 引导式访谈状态（shark-skill-creator 对话式创建协议，动态 AI 驱动）
   const [interviewActive, setInterviewActive] = useState(false);
   const [interviewContext, setInterviewContext] = useState("");
@@ -341,6 +230,10 @@ export function AuthoringWorkbench({
   const [reviewResult, setReviewResult] = useState<SkillReviewResult | null>(null);
   const [reviewLoading, setReviewLoading] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
+  // 审查流式：LLM 逐行输出实时展示在附带资源页（用户可感知“正在检索什么”）
+  const [reviewStream, setReviewStream] = useState("");
+  // 修复流式：一键修复过程逐行展示当前正在修改的内容
+  const [fixStream, setFixStream] = useState("");
   const reviewAbortRef = useRef<AbortController | null>(null);
   // 审查报告持久化元数据（一技能一报告）
   const [reportMeta, setReportMeta] = useState<ReviewReportMeta | null>(null);
@@ -348,20 +241,12 @@ export function AuthoringWorkbench({
   const [fixing, setFixing] = useState(false);
   const fixAbortRef = useRef<AbortController | null>(null);
   // 60s 未保存淡入「没灵感？试试 AI 创作」；保存成功重置
-  // X5 emoji 快选 Popover
-  const [emojiOpen, setEmojiOpen] = useState(false);
   // R3-1 左侧「我的描述」推拉抽屉（默认展开，可收起以最大化编辑区）
   const [descOpen, setDescOpen] = useState(true);
   // R4：主行 DOM 节点——抽屉 Portal 锚定进主行（absolute），与 Markdown 区水平对齐
   const [rowEl, setRowEl] = useState<HTMLDivElement | null>(null);
   // R6：#2 右侧 AI 流式预览滚动容器——流式期间追随输出到底部（同翻译功能）
   const previewScrollRef = useRef<HTMLDivElement>(null);
-
-  const dirtyRef = useRef(false);
-  const setDirtyAll = useCallback((d: boolean) => {
-    dirtyRef.current = d;
-    setDirty(d);
-  }, []);
 
   // Existing editor fields remain editable while the Creator state grows around
   // them. This preserves AI/interview/evaluation data across ordinary edits.
@@ -374,17 +259,15 @@ export function AuthoringWorkbench({
     );
   }, [current?.id, draft, location]);
 
-  // 初始加载：磁盘内容 + 存量草稿检测 + LLM 配置探测
+  // 初始加载：磁盘内容回显（不标脏、不落盘）+ 预热全局 LLM 配置缓存
+  // （审查/访谈/生成共用 requireLLMConfig；不预热则缓存空 → 误报「未配置 LLM」）
   useEffect(() => {
-    setStored(loadDraft(draftId));
     if (!isMockMode()) {
-      loadLLMConfig()
-        .then((c) => setLlmReady(!!c.hasKey))
-        .catch(() => setLlmReady(false));
+      void loadLLMConfig().catch(() => undefined);
     }
     if (current) {
       // PLAN-11 阶段 0：存量 description 直接回显「我的描述」单输入，抽屉不空白
-      setDraft((d) => ({
+      setDraftSilently((d) => ({
         ...d,
         name: current.name,
         desc: current.description,
@@ -396,9 +279,9 @@ export function AuthoringWorkbench({
           const parts = splitFrontmatter(md);
           if (parts) {
             setOrigFm(parts.fm);
-            setDraft((d) => ({ ...d, body: parts.body }));
+            setDraftSilently((d) => ({ ...d, body: parts.body }));
           } else {
-            setDraft((d) => ({ ...d, body: md }));
+            setDraftSilently((d) => ({ ...d, body: md }));
           }
         })
         .catch(() => toast.error("读取 SKILL.md 失败"));
@@ -436,48 +319,30 @@ export function AuthoringWorkbench({
     if (t) setLocation(t.id);
   }, [tools, initialLocation, current]);
 
-  // 内容参考分组（全局 skills 按 scan_label）
-  const refGroups = useMemo(() => {
-    const m = new Map<string, Skill[]>();
-    for (const s of skills) {
-      const k = s.scan_label || "未分类";
-      const arr = m.get(k) ?? [];
-      arr.push(s);
-      m.set(k, arr);
-    }
-    return [...m.entries()];
-  }, [skills]);
-
-  // 选中参考 → 只读加载 SKILL.md（右侧渲染）
-  useEffect(() => {
-    if (!refSkillId) {
-      setRefContent("");
-      return;
-    }
-    const s = skills.find((x) => x.id === refSkillId);
-    if (!s) return;
-    readSkillFile(s.source_path)
-      .then(setRefContent)
-      .catch(() => setRefContent("（读取失败）"));
-  }, [refSkillId, skills]);
-
-  const refName = useMemo(
-    () => skills.find((s) => s.id === refSkillId)?.name ?? "",
-    [skills, refSkillId],
-  );
-
   // 虚拟附件预览（未保存即可见）：AI 生成正文后，立即在 FileTree 渲染
   // SKILL.md + 标准附件（references/scripts/assets）的结构与内容，保存仅为最终落盘。
+  // B3 修复：attContentsRef 中非标准清单的文件（AI 从正文解析出的自定义引用）
+  // 也要进入虚拟树，否则节点不存在 → 无法聚焦流式、保存时落盘循环也访问不到。
+  // C5：标准附件不再携带模板占位内容——节点仅显示文件名，实际内容开始时才流式出现。
   const virtualFiles = useMemo(() => {
     const desc = buildDesc(draft) || draft.desc;
     if (!draft.body.trim()) return [];
     const name = current?.name || draft.name.trim() || generateSkillName(desc);
     const fm = `name: ${name}\ndescription: ${desc || "TODO"}\nemoji: ${draft.emoji || "🧩"}`;
+    const stdPaths = new Set<string>();
+    const std = buildAttachmentFiles(name, desc).map((f) => {
+      stdPaths.add(f.path);
+      return { path: f.path, content: attContentsRef.current[f.path] ?? "" };
+    });
+    const extra = Object.entries(attContentsRef.current)
+      .filter(([p]) => !stdPaths.has(p))
+      .map(([p, content]) => ({ path: p, content }));
     return [
       { path: "SKILL.md", content: `---\n${fm}\n---\n${draft.body}` },
-      ...buildAttachmentFiles(name, desc),
+      ...std,
+      ...extra,
     ];
-  }, [draft.body, draft.name, draft.desc, draft.purpose, draft.emoji, current?.name]);
+  }, [draft.body, draft.name, draft.desc, draft.purpose, draft.emoji, current?.name, attVersion]);
 
 
   // R6：#2 流式跟随滚动——每次内容落地把预览容器钉到底部（同翻译功能）；
@@ -493,15 +358,58 @@ export function AuthoringWorkbench({
     aiAbortRef.current?.abort();
   }, []);
 
+  // 流式渲染节流（rAF）：delta 累积到 buffer，每帧最多提交一次 setStream。
+  // 长正文流式时 react-markdown 每 delta 全量解析是真实卡顿源；
+  // 附件流已有 50ms 节流（runAttachmentGeneration），这里覆盖正文流。
+  const streamBufRef = useRef("");
+  const streamRafRef = useRef<number | null>(null);
+  const flushStreamRaf = useCallback(() => {
+    streamRafRef.current = null;
+    if (streamBufRef.current) {
+      setStream((s) => s + streamBufRef.current);
+      streamBufRef.current = "";
+    }
+  }, []);
+  const pushStreamDelta = useCallback(
+    (d: string) => {
+      streamBufRef.current += d;
+      if (streamRafRef.current === null) {
+        streamRafRef.current = requestAnimationFrame(flushStreamRaf);
+      }
+    },
+    [flushStreamRaf],
+  );
+  /** 流结束后同步 flush 残余 buffer（防末尾 delta 滞留在 rAF 队列导致内容丢失） */
+  const flushStreamNow = useCallback(() => {
+    if (streamRafRef.current !== null) {
+      cancelAnimationFrame(streamRafRef.current);
+      streamRafRef.current = null;
+    }
+    if (streamBufRef.current) {
+      setStream((s) => s + streamBufRef.current);
+      streamBufRef.current = "";
+    }
+  }, []);
+  /** 流开始前重置节流 buffer */
+  const resetStreamThrottle = useCallback(() => {
+    streamBufRef.current = "";
+    if (streamRafRef.current !== null) {
+      cancelAnimationFrame(streamRafRef.current);
+      streamRafRef.current = null;
+    }
+  }, []);
+
   // 关闭右侧 AI 输出面板：彻底终止生成进程 + 清除流式状态
   const handleCloseStreamPanel = useCallback(() => {
     // 若正在流式生成，先中止请求（防止后台继续消耗资源）
     aiAbortRef.current?.abort();
     aiAbortRef.current = null;
+    resetStreamThrottle();
     setStreaming(false);
     setStream("");
     setStreamDone(false);
-  }, []);
+    setThinkStream("");
+  }, [resetStreamThrottle]);
 
   // 智能审查：基于 shark-skill-creator 规范对当前技能进行全自动 AI 分析
   const runSkillReview = useCallback(async () => {
@@ -519,6 +427,9 @@ export function AuthoringWorkbench({
     setReviewLoading(true);
     setReviewError(null);
     setReviewResult(null);
+    setReviewStream("");
+    // 审查可视化：切到附带资源页，打开并高亮 SKILL.md，流式内容实时展示
+    setRightTab("files");
     const controller = new AbortController();
     reviewAbortRef.current = controller;
     try {
@@ -526,7 +437,7 @@ export function AuthoringWorkbench({
         skillName,
         fullContent,
         validationSummary,
-        () => {}, // 审查结果不需要流式显示，等待完整 JSON
+        (d) => setReviewStream((s) => s + d), // 流式逐行追加（节流无需：渲染量小）
         controller.signal,
       );
       // 解析 JSON 结果
@@ -535,6 +446,8 @@ export function AuthoringWorkbench({
         throw new Error("审查结果格式异常");
       }
       setReviewResult(parsed);
+      // 审查完成：切回评估页展示报告
+      setRightTab("evaluate");
       // 持久化报告（一技能一报告）
       const meta: ReviewReportMeta = {
         skillName,
@@ -601,13 +514,16 @@ export function AuthoringWorkbench({
   // PLAN-11 能力 2：续写正文——复用右侧 pane 流式预览；A 无正文生成全文 / B 有正文续写不覆盖
   // 增强：shark-skill-creator 对话式访谈协议——新建技能（无正文）时强制启动动态访谈引导，
   // AI 根据用户回答动态决定下一步问题，收集结构化信息后注入 AI Prompt。
-  const runContinue = async (skipInterview = false) => {
+  // overrideDesc：聊天发送时直接携带输入文本，避免与同批 patch(purpose) 的更新时序竞争。
+  const runContinue = async (skipInterview = false, overrideDesc?: string) => {
     if (streaming) return;
-    const desc = buildDesc(draft) || draft.desc;
+    const desc = overrideDesc?.trim() || buildDesc(draft) || draft.desc;
     if (!desc.trim()) {
-      toast.warning("先填写「我的描述」再续写正文");
+      toast.warning("先在创作引导输入框写下想法，再生成正文");
       return;
     }
+    // 会话回写：用户意图事件（创作引导聊天发送的消息在这里落盘）
+    recordSession({ kind: "user_msg", content: desc });
     // 对话式访谈：新建技能（无正文）时强制触发动态访谈引擎
     if (!draft.body.trim() && !skipInterview) {
       setInterviewActive(true);
@@ -643,44 +559,154 @@ export function AuthoringWorkbench({
     void executeGeneration(desc);
   };
 
+  // B3：打开附件提案（初稿落地后）——合并正文引用与标准结构附件清单
+  const openAttachmentProposal = (body: string, desc: string) => {
+    const name = current?.name || draft.name.trim() || generateSkillName(desc);
+    const merged = [
+      ...new Set([
+        ...extractAttachmentRefs(body),
+        ...buildAttachmentFiles(name, desc).map((f) => f.path),
+      ]),
+    ];
+    setAttCandidates(merged);
+    setAttSelected(new Set(merged));
+    setAttOpen(true);
+  };
+
+  // B3：逐个流式生成已选附件内容（保存时一并写盘；本次不落盘不阻塞）
+  // T2：自动跳文件区 + 收起创作引导 + 逐文件流式直播（50ms 节流刷新文件树）
+  const runAttachmentGeneration = async () => {
+    const desc = buildDesc(draft) || draft.desc;
+    const name = current?.name || draft.name.trim() || generateSkillName(desc);
+    const list = attCandidates.filter((p) => attSelected.has(p));
+    // 自动聚焦：关闭提案对话框、收起创作引导、切换到附带资源页
+    setAttOpen(false);
+    setDescOpen(false);
+    setRightTab("files");
+    // C3：可中断——附件批量生成支持随时停止
+    const controller = new AbortController();
+    attAbortRef.current = controller;
+    let done = 0;
+    let lastTick = 0;
+    for (const path of list) {
+      setAttBusy(path);
+      setAttProgress({ i: done, total: list.length });
+      // 立即占位进虚拟树：节点在生成开始秒出现 → autoOpenPath 聚焦/流式无缝衔接
+      if (!(path in attContentsRef.current)) {
+        attContentsRef.current[path] = "";
+        setAttVersion((v) => v + 1);
+      }
+      try {
+        const r = await generateAttachmentDraftStream(
+          {
+            fileRel: path,
+            skillName: name,
+            skillDescription: desc,
+            skillBody: draft.body,
+            sessionMessages: eventsToMessages(sessionEventsRef.current),
+          },
+          (d) => {
+            attContentsRef.current[path] = (attContentsRef.current[path] ?? "") + d;
+            const now = Date.now();
+            if (now - lastTick > 50) {
+              lastTick = now;
+              setAttVersion((v) => v + 1);
+            }
+          },
+          controller.signal,
+        );
+        attContentsRef.current[path] = r.text;
+        setAttVersion((v) => v + 1);
+        recordSession({ kind: "attachment_result", content: r.text, extra: { file: path } });
+        done += 1;
+        setAttProgress({ i: done, total: list.length });
+      } catch (e) {
+        if (e instanceof DOMException && e.name === "AbortError") {
+          toast.info("已停止附件生成——已生成的文件保留");
+          break;
+        }
+        toast.error(`附件 ${path} 生成失败，已跳过`);
+        done += 1;
+      }
+    }
+    attAbortRef.current = null;
+    setAttBusy(null);
+    setAttProgress(null);
+    if (done > 0) {
+      toast.success(`已生成 ${done} 个附件内容，保存技能时一并落盘`);
+    }
+  };
+
+  /** C3：停止附件生成（用户可随时打断） */
+  const stopAttachmentGeneration = () => {
+    attAbortRef.current?.abort();
+  };
+
   // 实际执行 AI 生成（从 runContinue 拆出，供访谈完成后调用）
   const executeGeneration = async (desc: string) => {
-    setRefSkillId(""); // 关参考，右栏让位给流式
+    resetStreamThrottle();
     setStreaming(true);
     setStreamDone(false);
     setStream("");
+    setThinkStream("");
     const controller = new AbortController();
     aiAbortRef.current = controller;
     try {
       const { finishReason, text } = await continueBodyStream(
         desc,
         draft.body,
-        (d) => setStream((s) => s + d),
+        pushStreamDelta,
         controller.signal,
         interviewContext || undefined,
+        (d) => setThinkStream((s) => s + d),
+        eventsToMessages(sessionEventsRef.current),
       );
       if (finishReason === "length") {
         toast.warning("模型输出被截断——可应用后再续写");
+        pushGuideMessage("system", "输出被截断，可点击右侧「追加到正文」保留已生成部分后再续写");
       } else if (!draft.body.trim() && text.trim()) {
         // 初稿是主路径：正文为空时，正常完成的结果直接落地到编辑器。
         // 中止或截断仍保留在辅助预览中，避免半成品静默覆盖草稿。
+        resetStreamThrottle();
         patch({ body: text });
         setStream("");
         setStreamDone(false);
         setRightTab("body");
         setPreview("split");
         toast.success("初稿已生成，可以继续修改");
+        pushGuideMessage("assistant", "初稿已生成，已写入编辑区正文，可继续修改或补充想法。");
+        recordSession({ kind: "generation_result", content: text });
+        // C6：AI 标题总结——新建态让 AI 根据内容起名（覆盖 skills-skills 之类空泛名）
+        if (!current) {
+          void (async () => {
+            const aiName = await summarizeSkillTitle(desc, text).catch(() => "");
+            if (aiName && NAME_RE.test(aiName)) {
+              patch({ name: aiName });
+            } else if (!draft.name.trim() || !NAME_RE.test(draft.name)) {
+              patch({ name: generateSkillName(desc) });
+            }
+          })();
+        }
+        // B3：弹附件提案（基于新正文的引用 + 标准结构清单）
+        openAttachmentProposal(text, desc);
       } else {
         setStreamDone(true);
+        pushGuideMessage("assistant", "补充内容已生成，可在右侧预览确认后「追加到正文」。");
+        recordSession({ kind: "generation_result", content: text });
       }
     } catch (e) {
       if (e instanceof DOMException && e.name === "AbortError") {
         toast.info("已停止续写——已生成部分保留在预览中");
         setStreamDone(true);
+        pushGuideMessage("system", "已停止生成，已生成部分保留在右侧预览中");
       } else {
-        toast.error(e instanceof Error ? e.message : String(e));
+        const msg = e instanceof Error ? e.message : String(e);
+        toast.error(msg);
+        pushGuideMessage("system", `生成失败：${msg}`);
       }
     } finally {
+      // 同步 flush 残余 buffer：末尾 delta 不滞留在 rAF 队列
+      flushStreamNow();
       setStreaming(false);
       aiAbortRef.current = null;
     }
@@ -704,26 +730,14 @@ export function AuthoringWorkbench({
     setStreamDone(false);
   };
 
-  // 草稿兜底：dirty 变更同步写 localStorage
+  // 真实修改统一入口：经草稿 Hook 标脏 + 落盘；附业务副作用（校验失效）
   const patch = useCallback(
     (p: Partial<WbDraft>) => {
-      setDraft((d) => {
-        const next = { ...d, ...p };
-        storeDraft(
-          draftId,
-          next,
-          mergeWbDraftIntoCreationState(creationState, next, {
-            id: current?.id ?? null,
-            targetLocation: location,
-          }),
-        );
-        return next;
-      });
+      draftApi.patch(p);
       setValidation(null);
       setCreationState((state) => ({ ...state, validation: null }));
-      setDirtyAll(true);
     },
-    [creationState, current?.id, draftId, location, setDirtyAll],
+    [draftApi],
   );
 
   // 一键修复：调用 AI 按审查问题自动修正正文 + 自动创建缺失附件（必须在 patch 声明之后，避免 TDZ）
@@ -734,6 +748,9 @@ export function AuthoringWorkbench({
     const createdFiles: string[] = [];
 
     setFixing(true);
+    setFixStream("");
+    // 修复可视化：切到附带资源页，打开并高亮 SKILL.md，流式内容实时展示
+    setRightTab("files");
     const controller = new AbortController();
     fixAbortRef.current = controller;
     try {
@@ -773,10 +790,13 @@ export function AuthoringWorkbench({
         desc,
         draft.body,
         reviewResult.issues,
-        () => {}, // 修复结果等待完整输出
+        (d) => setFixStream((s) => s + d), // 修复过程流式展示（当前正在修改什么）
         controller.signal,
       );
-      if (text.trim()) {
+      if (!text.trim()) {
+        // 关键 Bug 修复：AI 未产出内容时明确失败提示，不再“静默成功”误导用户
+        toast.error("AI 未产出修复内容——令牌已消耗，请查看原因或重试");
+      } else {
         patch({ body: text.trim() });
         // 写入修复后的 SKILL.md
         if (skillDir) {
@@ -786,12 +806,13 @@ export function AuthoringWorkbench({
         }
       }
 
-      // ③ 按 shark-skill-creator 规范自动创建标准附件（references/scripts/assets）
+      // ③ 按 shark-skill-creator 规范自动创建标准附件（references/scripts/assets）：
+      // AI 提案生成内容优先（attContentsRef），占位模板仅兜底；与保存管线保持一致
       if (skillDir) {
         const filesToCreate = buildAttachmentFiles(skillName, desc);
         for (const f of filesToCreate) {
           try {
-            await skillWriteFile(skillDir, f.path, f.content);
+            await skillWriteFile(skillDir, f.path, attContentsRef.current[f.path] ?? f.content);
             createdFiles.push(f.path);
           } catch { /* 单个文件失败不阻断 */ }
         }
@@ -813,12 +834,17 @@ export function AuthoringWorkbench({
         createdFiles.push(".review-report.json（已更新）");
       }
 
-      // ⑤ 展示修复结果文件清单
+      // ⑤ 展示修复结果文件清单 + 校验刷新（修复结果持久化验证）
+      if (skillDir) {
+        await refreshValidation(skillDir).catch(() => undefined);
+        refresh();
+      }
       if (createdFiles.length > 0) {
         toast.success(`修复完成，共处理 ${createdFiles.length} 个文件：${createdFiles.join("、")}`);
       } else {
         toast.success("已按 shark-skill-creator 规范自动修复正文");
       }
+      setFixStream("");
     } catch (e) {
       if (e instanceof DOMException && e.name === "AbortError") {
         toast.info("修复已取消");
@@ -919,13 +945,29 @@ export function AuthoringWorkbench({
         // Both creation paths receive the same final artifact. In particular,
         // tool-target creation no longer loses emoji/platform metadata.
         await skillWriteFile(dir, "SKILL.md", `---\n${newFrontmatter}\n---\n${bodyText}`);
-        // 按 shark-skill-creator 规范同步创建标准附件（references/scripts/assets）
+        // per shark-skill-creator 规范同步创建标准附件（references/scripts/assets）；
+        // 已通过 B3 附件提案生成的内容优先（占位模板仅兜底）。
+        // B3 修复：除标准清单外，AI 从正文解析出的自定义附件也要一并落盘
+        // （此前只在标准 4 文件循环里写盘 → 自定义文件流式生成后保存丢失，致命 bug）。
+        const writtenFiles = new Set<string>();
         for (const f of buildAttachmentFiles(name, desc)) {
-          await skillWriteFile(dir, f.path, f.content).catch(() => {});
+          await skillWriteFile(
+            dir,
+            f.path,
+            attContentsRef.current[f.path] ?? f.content,
+          ).catch(() => {});
+          writtenFiles.add(f.path);
+        }
+        for (const [rel, content] of Object.entries(attContentsRef.current)) {
+          if (writtenFiles.has(rel) || !content.trim()) continue;
+          await skillWriteFile(dir, rel, content).catch(() => {});
+        }
+        // 用户手工编辑过的文件（FileTree 编辑器，无局部保存按钮）统一落盘
+        for (const [rel, content] of Object.entries(editedFilesRef.current)) {
+          await skillWriteFile(dir, rel, content).catch(() => {});
         }
         await refreshValidation(dir);
-        clearDraft("new");
-        setDirtyAll(false);
+        draftApi.markClean("new");
         toast.success(`技能 ${name} 已创建（${location}）`);
         refresh();
         const all = await scanSkills();
@@ -934,7 +976,12 @@ export function AuthoringWorkbench({
           all.find((s) => s.name === name);
         if (found) {
           setCurrent(found);
-          setStored(null);
+          draftApi.dismissStored();
+          // T3：会话归属迁移——草稿键（new）→ 技能 id 键，下次编辑同技能恢复同一会话
+          if (sessionIdRef.current) {
+            rememberSessionId(found.id, sessionIdRef.current);
+            forgetSessionId("new");
+          }
           setOrigFm(
             `name: ${found.name}\ndescription: ${found.description}\nemoji: ${found.emoji ?? "🧩"}`,
           );
@@ -950,6 +997,15 @@ export function AuthoringWorkbench({
           "SKILL.md",
           `---\n${fm}\n---\n${draft.body}`,
         );
+        // B3 修复：编辑态保存同样落盘全部 AI 生成附件（incl. 自定义引用文件）
+        for (const [rel, content] of Object.entries(attContentsRef.current)) {
+          if (!content.trim()) continue;
+          await skillWriteFile(current.skill_dir, rel, content).catch(() => {});
+        }
+        // 用户手工编辑过的文件（FileTree 编辑器，无局部保存按钮）统一落盘
+        for (const [rel, content] of Object.entries(editedFilesRef.current)) {
+          await skillWriteFile(current.skill_dir, rel, content).catch(() => {});
+        }
         if (desc !== current.description) {
           await skillEditFrontmatter(current.skill_dir, [
             { key: "description", op: "set", value: desc },
@@ -961,8 +1017,7 @@ export function AuthoringWorkbench({
           ]);
         }
         await refreshValidation(current.skill_dir);
-        clearDraft(current.id);
-        setDirtyAll(false);
+        draftApi.markClean(current.id);
         toast.success("已保存（Ctrl+S 等效）");
         refresh();
       }
@@ -972,16 +1027,48 @@ export function AuthoringWorkbench({
     } finally {
       setBusy(false);
     }
-  }, [busy, current, draft, location, origFm, refresh, refreshValidation, setDirtyAll]);
+  }, [busy, current, draft, location, origFm, refresh, refreshValidation, draftApi]);
 
   useEffect(() => {
     saveRef.current = () => void save();
   }, [save]);
 
   const handleBack = () => {
-    if (dirtyRef.current) setConfirmExit(true);
-    else onExit();
+    // 真实修改 或 新建态已发生对话/生成 → 弹确认框（保存 or 主动放弃）
+    const hasSessionActivity = sessionEventsRef.current.some(
+      (e) => e.kind !== "session_created",
+    );
+    if (draftApi.dirty || (!current && hasSessionActivity)) {
+      setConfirmExit(true);
+      return;
+    }
+    // 新建且全无实际内容：静默退出，同时清理自动创建的会话残留（下次新建干净空态）
+    const sid = sessionIdRef.current ?? recallSessionId(draftId);
+    if (!current) {
+      draftApi.clearAll();
+      if (sid) {
+        forgetSessionId(draftId);
+        void sessionDelete(sid);
+      }
+    }
+    onExit();
   };
+
+  /**
+   * 主动放弃创作（「直接返回」）：立即清除草稿快照与会话事件日志，
+   * 下次新建呈现干净空态。磁盘技能文件（若已保存）不受影响；
+   * 新建立即放弃则彻底清空一切。兜底恢复仅保留给非正常结束（崩溃/强关）。
+   */
+  const exitWithoutSaving = useCallback(() => {
+    const sid = sessionIdRef.current ?? recallSessionId(draftId);
+    draftApi.clearAll();
+    if (sid) {
+      forgetSessionId(draftId);
+      void sessionDelete(sid);
+    }
+    setConfirmExit(false);
+    onExit();
+  }, [draftId, draftApi, onExit]);
 
   // R3-2：预览 pane 内部滚动（min-h-0 破除 flex/grid 子项 min-height:auto 撑高）
   const previewPane = useMemo(
@@ -995,7 +1082,7 @@ export function AuthoringWorkbench({
               <ScrollText className="mx-auto h-8 w-8 text-text-tertiary/70" />
               <p className="mt-3 text-sm font-medium text-text-secondary">正文会在这里出现</p>
               <p className="mt-1.5 text-xs leading-relaxed text-text-tertiary">
-                先写下左侧的想法，再点击“生成初稿”。生成后内容仍然可以直接编辑。
+                在左侧「创作引导」里描述你的想法并发送，AI 会通过对话访谈带你逐步完成正文。
               </p>
             </div>
           </div>
@@ -1005,37 +1092,28 @@ export function AuthoringWorkbench({
     [draft.body],
   );
 
-  // Keep evaluation/interview/state changes recoverable even when no legacy
-  // editor field changed in the same turn.
-  useEffect(() => {
-    if (!dirtyRef.current) return;
-    storeDraft(draftId, draft, creationState);
-  }, [creationState, draft, draftId]);
-
+  // 阶段 / 访谈等状态变化由草稿 Hook 在有脏时统一落盘（查看阶段零写盘）
   const handleStageChange = useCallback(
     (stage: CreationStage) => {
       setCreationState((state) => {
         const next = { ...state, stage };
-        storeDraft(draftId, draft, next);
+        // 草稿落盘仅跟随真实修改：查看阶段（无 dirty）不写 localStorage，
+        // 否则「打开 → 检查 Skill → 返回 → 再次进入」会误报恢复横幅。
+        draftApi.persistIfDirty(next);
         return next;
       });
-      setDirtyAll(true);
+      // 脏状态修复：阶段切换（含进入「检查 Skill」只读查看）是导航 + 状态机推进，
+      // 不是内容修改——不标脏，避免无任何编辑却提示「有未保存的内容」。
       if (stage === CreationStage.Evaluate) {
         setRightTab("evaluate");
-        // 进入评估阶段：优先加载已持久化报告，无报告时自动触发审查
-        void loadPersistedReport().then(() => {
-          // loadPersistedReport 内部会设置 reviewResult，若仍为 null 则触发新审查
-          setReviewResult((prev) => {
-            if (!prev) void runSkillReview();
-            return prev;
-          });
-        });
+        // 只加载已持久化报告；审查由用户点「开始审查」主动触发（不再自动触发）
+        void loadPersistedReport();
       }
       if (stage === CreationStage.Generate || stage === CreationStage.Package) {
         setRightTab("body");
       }
     },
-    [draft, draftId, setDirtyAll, runSkillReview, loadPersistedReport],
+    [draftApi, loadPersistedReport],
   );
 
   // 编辑区工具条（normal / fullscreen 共用；full 时把「全屏」换成「还原」）
@@ -1117,58 +1195,138 @@ export function AuthoringWorkbench({
     </div>
   );
 
+  // 审查须知卡：无报告且无错误时占位（含进行中——原地变进度，不跳版）；错误优先展示重试入口
+  const showReviewBrief = !reviewResult && !reviewError;
+
+  // 审查/修复进行中流式展示（附带资源页）：AI 逐行输出可见，无“无尽等待”
+  const inspectStreamRef = useRef<HTMLPreElement>(null);
+  const inspectStreamText = fixing ? fixStream : reviewStream;
+  const inspectActive = reviewLoading || fixing;
+  useEffect(() => {
+    if (inspectActive && inspectStreamRef.current) {
+      inspectStreamRef.current.scrollTop = inspectStreamRef.current.scrollHeight;
+    }
+  }, [inspectStreamText, inspectActive]);
+
   // 编辑区内容（正文/附带资源），与工具条解耦，供普通态与全屏复用
   const editorBody =
     rightTab === "evaluate" ? (
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {/* 智能审查（shark-skill-creator 规范，全自动化，无人工评估） */}
-        <section className="rounded-md border border-border/40 bg-glass-1 p-3">
-          <div className="mb-2 flex items-center justify-between">
-            <h3 className="flex items-center gap-1.5 text-xs font-semibold text-text-primary">
-              <ShieldCheck className="h-3.5 w-3.5 text-primary" />
-              智能审查
-            </h3>
-            <div className="flex items-center gap-1.5">
-              {reviewLoading && (
+        {showReviewBrief ? (
+          /* 无报告：审查须知卡（图形化说明 + 唯一 CTA，绝不自动触发） */
+          <SkillReviewBrief
+            bodyEmpty={!draft.body.trim()}
+            running={reviewLoading}
+            onRun={() => void runSkillReview()}
+            onCancel={cancelReview}
+          />
+        ) : (
+          /* 有报告 / 出错：结果面板 + 顶部操作条 */
+          <section className="rounded-md border border-border/40 bg-glass p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <h3 className="flex items-center gap-1.5 text-xs font-semibold text-text-primary">
+                <ShieldCheck className="h-3.5 w-3.5 text-primary" />
+                智能审查
+              </h3>
+              {/* 加载态由须知卡接管（进度 + 取消都在卡内），此处只留「重新审查」 */}
+              {reviewResult && (
                 <Button
                   type="button"
                   size="sm"
+                  variant="secondary"
+                  className="h-6 shrink-0 gap-1 px-2 text-[11px] transition-colors hover:bg-primary/10 hover:text-text-primary"
+                  onClick={() => void runSkillReview()}
+                >
+                  <Sparkles className="h-3 w-3" />
+                  重新审查
+                </Button>
+              )}
+            </div>
+            <SkillReviewPanel
+              review={reviewResult}
+              error={reviewError}
+              reportMeta={reportMeta}
+              onRetry={() => void runSkillReview()}
+              onFix={() => void runSkillFix()}
+              fixing={fixing}
+            />
+          </section>
+        )}
+      </div>
+    ) : rightTab === "files" ? (
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        {inspectActive && (
+          <div className="mb-2 flex shrink-0 flex-col gap-1 rounded-md border border-primary/30 bg-primary/10 px-3 py-2">
+            <div className="flex items-center gap-2 text-xs text-text-secondary">
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+              <span>
+                {fixing
+                  ? "正在修复 正文："
+                  : "正在审查 正文："}
+                <span className="font-mono text-text-primary">SKILL.md</span>
+              </span>
+              <span className="flex-1" />
+              <span className="font-mono text-[10px] text-text-tertiary">AI 输出实时展示在下方</span>
+              {reviewLoading && (
+                <Button
                   variant="outline"
-                  className="h-6 px-2 text-[11px] !border-red-400/60 !text-red-500 hover:!bg-red-500/10"
+                  size="sm"
+                  className="h-6 px-2 text-[11px] !text-red-500 !border-red-400/60 hover:!bg-red-500/10"
                   onClick={cancelReview}
                 >
-                  <StopCircle className="h-3 w-3" />
                   取消
                 </Button>
               )}
-              <Button
-                type="button"
-                size="sm"
-                variant="secondary"
-                disabled={reviewLoading}
-                onClick={() => void runSkillReview()}
-                className="h-6 px-2 text-[11px]"
-              >
-                {reviewLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
-                {reviewResult ? "重新审查" : "开始审查"}
-              </Button>
             </div>
+            {inspectStreamText && (
+              <pre
+                ref={inspectStreamRef}
+                className="max-h-44 overflow-y-auto whitespace-pre-wrap rounded-md bg-glass-1/60 px-2 py-1.5 font-mono text-[11px] leading-relaxed text-text-secondary"
+              >
+                {inspectStreamText}
+              </pre>
+            )}
           </div>
-          <SkillReviewPanel
-            review={reviewResult}
-            loading={reviewLoading}
-            error={reviewError}
-            reportMeta={reportMeta}
-            onRetry={() => void runSkillReview()}
-            onCancel={cancelReview}
-            onFix={() => void runSkillFix()}
-            fixing={fixing}
+        )}
+        {attProgress && attBusy && (
+          <div className="mb-2 flex shrink-0 items-center gap-2 rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-xs text-text-secondary">
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+            <span>
+              正在生成附件 {attProgress.i + 1}/{attProgress.total}：
+              <span className="font-mono text-text-primary">{attBusy}</span>
+            </span>
+            <span className="flex-1" />
+            <span className="font-mono text-[10px] text-text-tertiary">内容实时写入下方文件树</span>
+            {/* C3：用户可随时打断附件生成 */}
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-6 px-2 text-[11px] !text-red-500 !border-red-400/60 hover:!bg-red-500/10"
+              onClick={stopAttachmentGeneration}
+              title="停止附件生成（已生成的文件保留）"
+            >
+              <Square className="h-3 w-3" />
+              停止
+            </Button>
+          </div>
+        )}
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <FileTree
+            skill={current}
+            onInsertReference={insertRefLine}
+            virtualFiles={virtualFiles}
+            autoOpenPath={attBusy ?? (inspectActive ? "SKILL.md" : null)}
+            highlightPath={inspectActive ? "SKILL.md" : null}
+            onFileContentChange={(rel, content) => {
+              // 无局部保存按钮：编辑内容统一由右上角「保存」落盘
+              if (current) {
+                editedFilesRef.current[rel] = content;
+              } else {
+                attContentsRef.current[rel] = content;
+              }
+            }}
           />
-        </section>
-      </div>
-    ) : rightTab === "files" ? (
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <FileTree skill={current} onInsertReference={insertRefLine} virtualFiles={virtualFiles} />
+        </div>
       </div>
     ) : (
       <div
@@ -1193,153 +1351,48 @@ export function AuthoringWorkbench({
     // R3-2：整页 h-dvh 列布局，页面不滚；pt-4(16)+顶栏 h-12(48)=64 → 抽屉 top-16 对齐
     <div className="flex min-h-0 flex-1 flex-col gap-3 py-3">
       {/* X1 顶栏：整页不滚后恒可见（保留 sticky 无害） */}
-      <div className="sticky top-0 z-40 grid shrink-0 gap-3 rounded-lg border border-border/50 bg-[var(--bg-0)]/95 px-4 py-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
-        <div className="flex min-w-0 flex-wrap items-center gap-3 lg:flex-nowrap">
-          <Button variant="ghost" size="icon-sm" className="shrink-0" onClick={handleBack} aria-label="返回创作列表">
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
-          <Popover open={emojiOpen} onOpenChange={setEmojiOpen}>
-            <PopoverTrigger asChild>
-              <button
-                type="button"
-                aria-label="选择技能图标"
-                className="grid h-9 w-9 shrink-0 place-items-center rounded-md border border-input bg-transparent text-lg leading-none hover:bg-glass-2"
-              >
-                {draft.emoji || "🧩"}
-              </button>
-            </PopoverTrigger>
-            <PopoverContent align="start" className="w-60">
-              <div className="grid grid-cols-8 gap-1">
-                {COMMON_EMOJI.map((e) => (
-                  <button
-                    key={e}
-                    type="button"
-                    className="grid h-7 w-7 place-items-center rounded text-base hover:bg-glass-2"
-                    onClick={() => {
-                      patch({ emoji: e });
-                      setEmojiOpen(false);
-                    }}
-                  >
-                    {e}
-                  </button>
-                ))}
-              </div>
-              <Input
-                value={draft.emoji}
-                onChange={(e) => patch({ emoji: e.target.value })}
-                className="mt-2 h-7 text-center text-sm"
-                maxLength={10}
-                placeholder="或输入图标"
-              />
-            </PopoverContent>
-          </Popover>
-          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1 lg:flex-nowrap">
-            {current ? (
-              <Tip label="编辑态名称只读，返回创作列表后可改名">
-                <h1 className="truncate text-[16px] font-semibold tracking-[-0.01em] text-text-primary">
-                  {current.name}
-                </h1>
-              </Tip>
-            ) : (
-              <div className="flex flex-wrap items-center gap-2">
-                <Input
-                  value={draft.name}
-                  onChange={(e) => patch({ name: e.target.value })}
-                  placeholder="给这个 skill 起个名称"
-                  className="h-9 w-52 max-w-full font-mono text-[13px]"
-                />
-                {nameInvalid && <span className="text-[11px] text-red-400">需使用小写字母、数字和连字符</span>}
-              </div>
-            )}
-            {!current && (
-              <Select value={location} onValueChange={setLocation}>
-                <SelectTrigger size="sm" className="h-8 w-fit min-w-36 border-0 px-0 text-[11px] text-text-tertiary shadow-none">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="authored">保存到创作库</SelectItem>
-                  {tools.map((t) => <SelectItem key={t.id} value={t.id}>保存到 {t.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            )}
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center justify-start gap-1.5 lg:flex-nowrap lg:justify-end lg:whitespace-nowrap">
-          {dirty && (
-            <Tip label="有未保存改动，草稿已自动保存">
-              <span className="mr-1 h-2 w-2 rounded-full bg-amber-400" />
-            </Tip>
-          )}
-          <Button size="sm" variant={descOpen ? "secondary" : "ghost"} aria-pressed={descOpen} onClick={() => setDescOpen((o) => !o)}>
-            <PanelLeft className="h-3.5 w-3.5" />
-            <span>创作引导</span>
-          </Button>
-          <Button size="sm" variant={editorOpen ? "secondary" : "ghost"} aria-pressed={editorOpen} onClick={() => setEditorOpen((o) => !o)}>
-            <Columns2 className="h-3.5 w-3.5" />
-            <span>编辑区</span>
-          </Button>
-          {llmReady ? (
-            <Button size="sm" disabled={streaming || !draft.purpose.trim()} onClick={() => void runContinue()}>
-              <Sparkles className="h-3.5 w-3.5" />
-              {draft.body.trim() ? "继续完善" : "生成初稿"}
-            </Button>
-          ) : (
-            <Tip side="bottom" label="未配置 LLM，请先打开设置填写 API Key">
-              <Button size="sm" disabled><Sparkles className="h-3.5 w-3.5" />生成初稿</Button>
-            </Tip>
-          )}
-          <Button variant="ghost" size="icon-sm" aria-label="设置" onClick={onOpenSettings}>
-            <Settings className="h-3.5 w-3.5" />
-          </Button>
-          <Button size="sm" disabled={busy || nameInvalid} onClick={() => void save()}>
-            {busy && <Loader2 className="h-3 w-3 animate-spin" />}
-            <Save className="h-3 w-3" />保存
-          </Button>
-        </div>
-      </div>
+      <AuthoringHeader
+        editingName={current?.name}
+        emoji={draft.emoji}
+        name={draft.name}
+        nameInvalid={nameInvalid}
+        onPatch={patch}
+        location={location}
+        onLocationChange={setLocation}
+        tools={tools}
+        dirty={dirty}
+        descOpen={descOpen}
+        onToggleDesc={() => setDescOpen((o) => !o)}
+        editorOpen={editorOpen}
+        onToggleEditor={() => setEditorOpen((o) => !o)}
+        onBack={handleBack}
+        onOpenSettings={onOpenSettings}
+        busy={busy}
+        onSave={() => void save()}
+      />
 
       {/* 草稿恢复横幅（三态） */}
       {stored && (
-        <div className="flex items-center gap-3 rounded-md border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-xs text-text-secondary">
-          <span>检测到未保存草稿（{fmtSavedAt(stored.savedAt)} 保存）</span>
-          <div className="flex-1" />
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => {
-              setDraft(stored.draft);
-              const restoredState =
-                stored.creationState ??
-                migrateWbDraftToCreationState(stored.draft, {
-                  id: current?.id ?? null,
-                  targetLocation: location,
-                });
-              setCreationState(restoredState);
-              setDirtyAll(true);
-              setStored(null);
-            }}
-          >
-            恢复草稿
-          </Button>
-          <Button variant="ghost" size="sm" onClick={() => setStored(null)}>
-            用磁盘内容
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-red-400"
-            onClick={() => {
-              clearDraft(draftId);
-              setStored(null);
-            }}
-          >
-            丢弃草稿
-          </Button>
-        </div>
+        <DraftRestoreBanner
+          savedAt={fmtSavedAt(stored.savedAt)}
+          onRestore={() => {
+            const snapshot = stored;
+            const restoredState =
+              snapshot.creationState ??
+              migrateWbDraftToCreationState(snapshot.draft, {
+                id: current?.id ?? null,
+                targetLocation: location,
+              });
+            draftApi.restoreStored();
+            setCreationState(restoredState);
+          }}
+          onDismiss={draftApi.dismissStored}
+          onDiscard={draftApi.discardStored}
+        />
       )}
 
-      {/* 主体 R3：编辑列常显；左「我的描述」进 Sheet 抽屉（R3-1）；
-          参考 / AI 流式进右侧辅助 pane（R3-3，不挤压编辑器）；全内部滚动（R3-2）。
+      {/* 主体 R3：编辑列常显；左「创作引导」（聊天态 / 访谈态）进 Sheet 抽屉（R3-1）；
+          AI 流式进右侧辅助 pane（R3-3，不挤压编辑器）；全内部滚动（R3-2）。
           抽屉展开时主行 padding-left 推让 400px + 16px 间隙。 */}
       <div
         ref={(n) => {
@@ -1358,143 +1411,18 @@ export function AuthoringWorkbench({
         </div>
         )}
 
-        {/* 右侧辅助 pane（R3-3 并列不挤压；R3-2 内部滚动，页面不滚） */}
-        {(refSkillId || streaming || streamDone) && (
-          <aside
-            className={cn(
-              "flex h-[min(320px,42vh)] min-h-0 shrink-0 flex-col gap-3 xl:h-full",
-              editorOpen ? "w-full xl:w-[36%] xl:max-w-[520px]" : "min-w-0 flex-1",
-            )}
-          >
-            {refSkillId ? (
-              // 参考头部：窄栏空间有限 → 动作全部收成纯图标按钮（悬停提示），
-              // 单行排布不换行，「关闭」不再被挤到第二行。
-              <div className="flex shrink-0 items-center gap-1 rounded-md border border-border/40 bg-glass-1 px-2 py-1.5 text-xs text-text-secondary">
-                <ScrollText className="h-3.5 w-3.5 shrink-0 text-primary" />
-                {/* 参考说明：圆圈问号悬停展示 tag */}
-                <Tip
-                  side="bottom"
-                  label={`内容参考 · ${refName} · 只读，不进草稿`}
-                >
-                  <button
-                    type="button"
-                    aria-label="参考说明"
-                    className="grid h-5 w-5 shrink-0 place-items-center rounded-full text-text-tertiary transition-colors hover:bg-glass-2 hover:text-text-primary"
-                  >
-                    <CircleHelp className="h-3.5 w-3.5" />
-                  </button>
-                </Tip>
-                <div className="min-w-0 flex-1" />
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-6 w-6 shrink-0 p-0"
-                  title="全屏预览参考"
-                  aria-label="全屏预览参考"
-                  onClick={() => setRefFull(true)}
-                >
-                  <Maximize2 className="h-3 w-3" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-6 w-6 shrink-0 p-0"
-                  title={refView === "render" ? "查看 md 源码" : "查看渲染"}
-                  aria-label={refView === "render" ? "查看源码" : "查看渲染"}
-                  onClick={() =>
-                    setRefView((v) => (v === "render" ? "raw" : "render"))
-                  }
-                >
-                  {refView === "render" ? (
-                    <Code2 className="h-3 w-3" />
-                  ) : (
-                    <Eye className="h-3 w-3" />
-                  )}
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-6 w-6 shrink-0 p-0"
-                  title="复制 md 原文（方便抄表格等写法）"
-                  aria-label="复制参考源码"
-                  onClick={() => {
-                    void navigator.clipboard
-                      ?.writeText(refContent)
-                      .then(() => toast.success("已复制参考源码"));
-                  }}
-                >
-                  <Copy className="h-3 w-3" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-6 w-6 shrink-0 p-0 hover:text-destructive"
-                  title="关闭参考"
-                  aria-label="关闭参考"
-                  onClick={() => setRefSkillId("")}
-                >
-                  <X className="h-3 w-3" />
-                </Button>
-              </div>
-            ) : (
-              <div className="flex shrink-0 flex-wrap items-center gap-2 gap-y-1 rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-xs text-text-secondary">
-                <Sparkles className="h-3.5 w-3.5 text-primary" />
-                <span>{streaming ? "正在完善正文，生成内容会先显示在这里" : "补充内容已生成，可追加到正文"}</span>
-                <div className="flex-1" />
-                {streaming && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-6 px-2 text-[11px] !text-red-500 !border-red-400/60 hover:!bg-red-500/10"
-                    onClick={handleStopAI}
-                    title="停止生成（已生成部分保留在预览中）"
-                  >
-                    <StopCircle className="h-3 w-3" />
-                    停止
-                  </Button>
-                )}
-                {streamDone && (
-                  <Button
-                    size="sm"
-                    className="h-6 px-2 text-[11px]"
-                    onClick={applyContinue}
-                    title="追加到原正文之后（不覆盖）"
-                  >
-                    追加到正文
-                  </Button>
-                )}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-6 w-6 shrink-0 p-0 hover:text-destructive"
-                  title={streaming ? "关闭面板并停止生成" : "关闭面板"}
-                  aria-label="关闭 AI 输出面板"
-                  onClick={handleCloseStreamPanel}
-                >
-                  <X className="h-3 w-3" />
-                </Button>
-              </div>
-            )}
-            <div
-              // R6：#2 流式预览滚动容器（streaming 期间自动追随底部）
-              ref={previewScrollRef}
-              className="min-h-0 flex-1 overflow-y-auto rounded-md border border-border/40 bg-glass-1 p-4"
-            >
-              {refSkillId && refView === "raw" ? (
-                <pre className="whitespace-pre-wrap font-mono text-[12px] leading-[1.7] text-text-secondary">
-                  {refContent || "（读取中…）"}
-                </pre>
-              ) : (
-                <MarkdownPreview
-                  content={
-                    refSkillId
-                      ? refContent || "（读取中…）"
-                      : stream + (streaming ? "\n▍" : "")
-                  }
-                />
-              )}
-            </div>
-          </aside>
+        {/* 右侧辅助 pane（R3-3 并列不挤压；R3-2 内部滚动，页面不滚）：仅承载 AI 流式输出 */}
+        {(streaming || streamDone) && (
+          <StreamPane
+            streaming={streaming}
+            streamDone={streamDone}
+            stream={stream}
+            thinkStream={thinkStream}
+            editorOpen={editorOpen}
+            onStop={handleStopAI}
+            onApply={applyContinue}
+            onClose={handleCloseStreamPanel}
+          />
         )}
       </div>
 
@@ -1512,20 +1440,11 @@ export function AuthoringWorkbench({
             onInteractOutside={(e) => e.preventDefault()}
             className="absolute bottom-0 left-0 top-0 flex w-[min(360px,88vw)] flex-col rounded-lg border p-0 sm:max-w-[360px]"
           >
-            <SheetHeader className="flex-row items-center justify-between px-5 pb-1 pt-4">
+            <SheetHeader className="gap-0 px-5 pb-3 pt-4">
               <SheetTitle className="flex items-center gap-2 text-[13px] font-semibold text-text-primary">
                 <Sparkles className="h-3.5 w-3.5 text-primary" />
                 创作引导
               </SheetTitle>
-              <Tip side="bottom" hoverOnly label={GUIDELINES}>
-                <button
-                  type="button"
-                  aria-label="写作准则"
-                  className="grid h-6 w-6 place-items-center rounded text-text-tertiary hover:bg-glass-2 hover:text-text-primary"
-                >
-                  <CircleHelp className="h-3.5 w-3.5" />
-                </button>
-              </Tip>
             </SheetHeader>
             {interviewActive ? (
               <InterviewGuide
@@ -1533,49 +1452,22 @@ export function AuthoringWorkbench({
                 onComplete={handleInterviewComplete}
                 onSkip={handleInterviewSkip}
                 busy={streaming}
+                onRecord={recordSession}
+                initialMessages={guideMessages}
               />
             ) : (
               <CreationGuidePanel
                 description={draft.purpose}
                 bodyEmpty={!draft.body.trim()}
                 busy={streaming}
+                messages={guideMessages}
                 onDescriptionChange={(value) => patch({ purpose: value })}
-                onGenerateBody={() => void runContinue()}
+                onSend={(text) => {
+                  pushGuideMessage("user", text);
+                  void runContinue(false, text);
+                }}
               />
             )}
-            <div className="shrink-0 border-t border-border/40 px-5 py-3">
-                <div className="flex items-center gap-2">
-                  <ScrollText className="h-3.5 w-3.5 text-primary" />
-                  <h4 className="text-xs font-semibold text-text-primary">内容参考</h4>
-                </div>
-                <div className="mt-2">
-                  <Select
-                    value={refSkillId}
-                    onValueChange={(v) => {
-                      setRefSkillId(v);
-                      setStream("");
-                      setStreamDone(false);
-                    }}
-                    disabled={streaming}
-                  >
-                    <SelectTrigger size="sm" className="w-full">
-                      <SelectValue placeholder="选一个技能查看其 SKILL.md（右侧辅助 pane）" />
-                    </SelectTrigger>
-                    <SelectContent className="max-h-72">
-                      {refGroups.map(([label, arr]) => (
-                        <SelectGroup key={label}>
-                          <SelectLabel>{label}</SelectLabel>
-                          {arr.map((s) => (
-                            <SelectItem key={s.id} value={s.id}>
-                              {s.emoji || "🧩"} {s.name}
-                            </SelectItem>
-                          ))}
-                        </SelectGroup>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-            </div>
           </SheetContent>
         </Sheet>
       )}
@@ -1590,103 +1482,23 @@ export function AuthoringWorkbench({
         </div>
       )}
 
-      {/* 参考全屏预览：fixed 覆盖层，独立于主行布局——可全屏看、可切源码、可复制 */}
-      {refFull && refSkillId && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-[var(--bg-0)] p-4">
-          <div className="mb-3 flex shrink-0 flex-wrap items-center gap-2 gap-y-1 rounded-md border border-border/40 bg-glass-1 px-3 py-2 text-xs text-text-secondary">
-            <ScrollText className="h-3.5 w-3.5 text-primary" />
-            <Tip side="bottom" label={`内容参考 · ${refName} · 全屏预览`}>
-              <button
-                type="button"
-                aria-label="参考说明"
-                className="grid h-5 w-5 place-items-center rounded-full text-text-tertiary hover:bg-glass-2 hover:text-text-primary"
-              >
-                <CircleHelp className="h-3.5 w-3.5" />
-              </button>
-            </Tip>
-            <div className="flex-1" />
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-6 px-2 text-[11px]"
-              onClick={() => setRefFull(false)}
-            >
-              <Minimize2 className="h-3 w-3" />
-              还原
-            </Button>
-            <Button
-              variant={refFullView === "raw" ? "secondary" : "ghost"}
-              size="sm"
-              className="h-6 px-2 text-[11px]"
-              onClick={() => setRefFullView("raw")}
-            >
-              <Code2 className="h-3 w-3" />
-              源码
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-6 px-2 text-[11px]"
-              onClick={() => {
-                void navigator.clipboard
-                  ?.writeText(refContent)
-                  .then(() => toast.success("已复制参考源码"));
-              }}
-            >
-              <Copy className="h-3 w-3" />
-              复制
-            </Button>
-            <Button
-              variant={refFullView === "split" ? "secondary" : "ghost"}
-              size="sm"
-              className="h-6 px-2 text-[11px]"
-              onClick={() => setRefFullView("split")}
-            >
-              <Columns2 className="h-3 w-3" />
-              分栏
-            </Button>
-            <Button
-              variant={refFullView === "render" ? "secondary" : "ghost"}
-              size="sm"
-              className="h-6 px-2 text-[11px]"
-              onClick={() => setRefFullView("render")}
-            >
-              <Eye className="h-3 w-3" />
-              预览
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-6 px-2 text-[11px]"
-              onClick={() => {
-                setRefFull(false);
-                setRefSkillId("");
-              }}
-            >
-              <X className="h-3 w-3" />
-              关闭参考
-            </Button>
-          </div>
-          {refFullView === "split" ? (
-            <div className="grid min-h-0 flex-1 grid-cols-2 gap-4">
-              <div className="min-h-0 overflow-y-auto rounded-md border border-border/40 bg-glass-1 p-6">
-                <MarkdownPreview content={refContent || "（读取中…）"} />
-              </div>
-              <pre className="min-h-0 overflow-y-auto whitespace-pre-wrap rounded-md border border-border/40 bg-glass-1 p-6 font-mono text-[13px] leading-[1.7] text-text-secondary">
-                {refContent || "（读取中…）"}
-              </pre>
-            </div>
-          ) : refFullView === "raw" ? (
-            <pre className="min-h-0 flex-1 overflow-y-auto whitespace-pre-wrap rounded-md border border-border/40 bg-glass-1 p-6 font-mono text-[13px] leading-[1.7] text-text-secondary">
-              {refContent || "（读取中…）"}
-            </pre>
-          ) : (
-            <div className="min-h-0 flex-1 overflow-y-auto rounded-md border border-border/40 bg-glass-1 p-6">
-              <MarkdownPreview content={refContent || "（读取中…）"} />
-            </div>
-          )}
-        </div>
-      )}
+      {/* B3 附件提案：初稿落地后按需生成 references/scripts 内容 */}
+      <AttachProposalDialog
+        open={attOpen}
+        onOpenChange={(o) => {
+          if (!attBusy) setAttOpen(o);
+        }}
+        candidates={attCandidates}
+        selected={attSelected}
+        onToggle={(p) => {
+          const next = new Set(attSelected);
+          if (next.has(p)) next.delete(p);
+          else next.add(p);
+          setAttSelected(next);
+        }}
+        busy={attBusy}
+        onGenerate={() => void runAttachmentGeneration()}
+      />
 
       {/* 返回保护 */}
       <Dialog
@@ -1708,7 +1520,7 @@ export function AuthoringWorkbench({
             >
               取消
             </Button>
-            <Button variant="ghost" size="sm" onClick={onExit}>
+            <Button variant="ghost" size="sm" onClick={exitWithoutSaving}>
               直接返回
             </Button>
             <Button

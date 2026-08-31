@@ -64,6 +64,10 @@ export interface MaskedLLM {
   api_key: string;
   base_url: string;
   model: string;
+  /** 思考模式 enabled/disabled（非敏感，脱敏配置中原样透出） */
+  thinking: string;
+  /** 思考强度 low/high/max */
+  reasoning_effort: string;
 }
 
 export interface MaskedConfig {
@@ -1547,17 +1551,21 @@ export function skillCommitDraft(
 // shark-skill-creator 集成（创作工作台加载内置规范定义）
 // ---------------------------------------------------------------------------
 
-/** 内置 creator 资源条目元数据（渐进披露：只带 rel_path/标题/大小，正文按需读） */
+/** 内置 creator 资源条目元数据（渐进披露：只带 rel_path/标题/用途/大小，正文按需读） */
 export interface CreatorAsset {
   rel_path: string;
   title: string;
+  /** 一句话用途（渐进披露索引，供 AI 决定是否读取全文） */
+  purpose?: string;
   size: number;
 }
 
-/** 内置 shark-skill-creator 定义：SKILL.md 全文（指令模板）+ references/scripts 清单 */
+/** 内置 shark-skill-creator 定义：压缩骨架 + SKILL.md 全文（指令模板）+ references/scripts 清单 */
 export interface CreatorInfo {
   name: string;
   description: string;
+  /** 压缩骨架（面向创作 AI 的首轮知识库；渐进披露入口） */
+  summary?: string;
   skill_md: string;
   references: CreatorAsset[];
   scripts: CreatorAsset[];

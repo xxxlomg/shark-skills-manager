@@ -4,7 +4,9 @@
 //! 1. 全等检测：SKILL.md 正文（剥 frontmatter）SHA-256 全等但 id 不同 → 「内容全等」组；
 //! 2. 同名检测：归一化名称相等（docker-ps / Docker_PS → dockerps）→ 「同名」组；
 //!    不再做编辑距离/描述重叠的加权相似度，也不展示百分比（Boss：同名即相似）。
-//! 3. 并查集聚组；junction 落点与其出处（canonical source_path 相同）永不组对。
+//! 3. 并查集聚组；junction 落点与其出处（canonical source_path 相同）永不组对；
+//! 4. Hub copy 落点（台账 kind=Copy 的 target）从查重候选排除——副本安装不是「重复技能」，
+//!    查重与 Hub 分发的语义边界（冲突点 C1）；技能库可见性不受影响（scanner 代表选取不变）。
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -357,6 +359,28 @@ pub fn detect(skills: &[Skill]) -> Vec<DupGroup> {
 }
 
 // ---------------------------------------------------------------------------
+// Hub 台账感知（冲突点 C1：copy 落点不是「重复技能」）
+// ---------------------------------------------------------------------------
+
+/// 判段某技能目录是否为 Hub 账本中的 copy 落点（kind=Copy 的 target）。
+///
+/// canonicalize 归一（UNC 前缀/大小写/符号链接穿透）后与台账 target 比对，
+/// 风格与 resolve_keep 的出处比对一致；目录不存在时返回 false（不误伤）。
+/// Move 模式在账本中归一为 Copy（hub.rs §2.7），同样命中。
+pub fn is_ledger_copy_target(skill_dir: &str, ledger: &crate::hub::LinksLedger) -> bool {
+    let canon = std::fs::canonicalize(Path::new(skill_dir)).unwrap_or_default();
+    if canon.as_os_str().is_empty() {
+        return false;
+    }
+    ledger.links.iter().any(|l| {
+        l.mode == crate::hub::LedgerMode::Copy
+            && std::fs::canonicalize(Path::new(&l.target))
+                .map(|p| p == canon)
+                .unwrap_or(false)
+    })
+}
+
+// ---------------------------------------------------------------------------
 // 手动处置：保留一份，另一份备份后进回收站（阶段 2「保存左边/保存右边」）
 // ---------------------------------------------------------------------------
 
@@ -573,6 +597,45 @@ mod dedup_tests {
         b.hub_linked = true;
         let groups = detect(&[a, b]);
         assert!(groups.is_empty(), "junction 与出处不是重复");
+    }
+
+    #[test]
+    fn copy_target_filtered_from_ledger() {
+        // 冲突点 C1：台账 kind=Copy 的 target（分发副本）命中；Link 落点与不存在目录不命中
+        let tmp = tempfile::tempdir().unwrap();
+        let copy_dir = tmp.path().join("copy-loc");
+        let other_dir = tmp.path().join("other");
+        std::fs::create_dir_all(&copy_dir).unwrap();
+        std::fs::create_dir_all(&other_dir).unwrap();
+        let mk = |id: &str, mode: crate::hub::LedgerMode, target: &str| crate::hub::HubLink {
+            id: id.into(),
+            skill_name: "demo".into(),
+            display_name: String::new(),
+            source: "/tmp/src/demo".into(),
+            target: target.into(),
+            target_tool: "codex".into(),
+            mode,
+            created_at: String::new(),
+        };
+        let ledger = crate::hub::LinksLedger {
+            version: 1,
+            links: vec![
+                mk("l1", crate::hub::LedgerMode::Copy, &copy_dir.to_string_lossy()),
+                mk("l2", crate::hub::LedgerMode::Link, &other_dir.to_string_lossy()),
+            ],
+        };
+        assert!(
+            is_ledger_copy_target(&copy_dir.to_string_lossy(), &ledger),
+            "Copy 落点必须命中"
+        );
+        assert!(
+            !is_ledger_copy_target(&other_dir.to_string_lossy(), &ledger),
+            "Link 落点不算 copy 副本"
+        );
+        assert!(
+            !is_ledger_copy_target("/nonexistent/definitely-missing", &ledger),
+            "不存在目录不误伤"
+        );
     }
 
     #[test]

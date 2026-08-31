@@ -4,8 +4,10 @@
  */
 export {
   callLLMStream,
+  callLLMChat,
   testLLMConnection,
   requireLLMConfig,
   type StreamResult,
+  type ChatMessage,
 } from "./client";
 export * as prompts from "./prompts";

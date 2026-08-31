@@ -45,14 +45,9 @@ export const SkillCard = memo(function SkillCard({ skill, index, layout, onClick
     },
   };
 
-  /** authored + 安装徽标（两种布局共用） */
+  /** 安装徽标（两种布局共用） */
   const metaBadges = (extraCls: string) => (
     <>
-      {skill.tool_id === "authored" && (
-        <span className={`${extraCls} inline-flex items-center gap-1 rounded border border-brand/40 bg-brand/10 px-1.5 py-px text-[10px] text-brand`}>
-          ✍️ authored
-        </span>
-      )}
       {/* 安装徽标：显示该技能还被哪些工具持有（B4 聚合） */}
       {skill.other_sources.length > 0 && (
         <span className={`${extraCls} flex flex-wrap items-center gap-1`}>

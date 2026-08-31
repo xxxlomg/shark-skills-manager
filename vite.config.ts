@@ -1,7 +1,10 @@
+/// <reference types="vitest/config" />
 import path from "node:path";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+
+// vitest 配置与 vite 共用（纯函数层测试，node 环境）
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
@@ -33,5 +36,10 @@ export default defineConfig({
       host: "127.0.0.1",
       protocol: "ws",
     },
+  },
+  test: {
+    // 纯函数层测试：node 环境即可（不涉及 DOM 的 lib 模块）
+    environment: "node",
+    include: ["src/**/*.test.ts"],
   },
 });

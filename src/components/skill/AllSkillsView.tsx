@@ -1,5 +1,5 @@
 /**
- * PLAN-14 工作流 B + T2：全部技能扁平视图（平铺 + 勾选批量打标）。
+ * 工作流 B + T2：全部技能扁平视图（平铺 + 勾选批量打标）。
  *
  * 定位：跨工具「看全部 + 批量打标」。平铺列表（D2），不折叠分组；
  * 勾选集临时有效（D3）；批量打标只做 添加(并集)/清除(摘除)（D4）。
@@ -25,7 +25,6 @@ import type { UseTagsApi } from "@/hooks/useTags";
 import { tagKeySkill } from "@/lib/api";
 import {
   collectionRelativeName,
-  toolDisplayName,
   type LayoutMode,
   type Skill,
 } from "@/hooks/useSkills";
@@ -36,7 +35,7 @@ interface AllSkillsViewProps {
   tagsApi?: UseTagsApi;
   /** 批量打包入口：携已勾选技能上抛（App 打开 PackCreateDialog 并预选） */
   onPackSelected?: (skills: Skill[]) => void;
-  /** PLAN-18：批量删除成功后的刷新回调（重扫技能 + Hub 联动） */
+  /** 批量删除成功后的刷新回调（重扫技能 + Hub 联动） */
   onSkillsRefresh?: () => void;
 }
 
@@ -159,7 +158,7 @@ export function AllSkillsView({
   const [filterOpen, setFilterOpen] = useState(false);
   const [layout, setLayout] = useState<LayoutMode>(readAllLayout);
   const [selectedOpen, setSelectedOpen] = useState(true);
-  // PLAN-18：批量删除确认弹窗（打开即预检引用）
+  // 批量删除确认弹窗（打开即预检引用）
   const [deleteOpen, setDeleteOpen] = useState(false);
   const sel = useBatchSelection();
 
@@ -294,9 +293,6 @@ export function AllSkillsView({
                   {s.name}
                 </p>
                 <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                  <span className="rounded-md border border-stroke bg-glass-2 px-1.5 py-[1px] text-[10.5px] text-text-secondary">
-                    {toolDisplayName(s.scan_label)}
-                  </span>
                   {s.parent_collection && (
                     <span className="max-w-[130px] truncate rounded-md border border-stroke/70 bg-glass px-1.5 py-[1px] text-[10.5px] text-text-tertiary">
                       {collectionRelativeName(s.scan_label, s.parent_collection)}
@@ -339,9 +335,6 @@ export function AllSkillsView({
                   {s.name}
                 </p>
               </div>
-              <span className="shrink-0 rounded-md border border-stroke bg-glass-2 px-1.5 py-[1px] text-[10.5px] text-text-secondary">
-                {toolDisplayName(s.scan_label)}
-              </span>
               {s.parent_collection && (
                 <span className="hidden max-w-[140px] shrink-0 truncate rounded-md border border-stroke/70 bg-glass px-1.5 py-[1px] text-[10.5px] text-text-tertiary sm:block">
                   {collectionRelativeName(s.scan_label, s.parent_collection)}
@@ -491,7 +484,7 @@ export function AllSkillsView({
         />
       )}
 
-      {/* PLAN-18：批量删除二次确认（含 Hub 引用检查与警告） */}
+      {/* 批量删除二次确认（含 Hub 引用检查与警告） */}
       <BatchDeleteDialog
         open={deleteOpen}
         onOpenChange={setDeleteOpen}

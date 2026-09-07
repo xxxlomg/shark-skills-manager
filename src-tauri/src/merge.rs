@@ -1,4 +1,4 @@
-//! PLAN-13 阶段 3：智能合并 —— 持久化闭环（落盘 + 备份 + 处置 + 历史 + 撤销）。
+//! 阶段 3：智能合并 —— 持久化闭环（落盘 + 备份 + 处置 + 历史 + 撤销）。
 //!
 //! 段落级拼接 / 冲突解决 / 落点选择在【前端】完成（交互式，见 MergeWorkbench 的
 //! 智能合并面板），后端只负责把【已定稿】的合并产物安全落盘，并保证全程可撤销：
@@ -260,7 +260,7 @@ pub fn apply_merge(args: ApplyMergeArgs) -> Result<MergeResult, String> {
         return Err(format!("技能 B 目录不存在：{}", b.skill_dir));
     }
 
-    // ---- 地雷（§4.5）：被处置方不能是 junction 落点 / 账本出处 ----
+    // ---- 地雷：被处置方不能是 junction 落点 / 账本出处 ----
     let will_dispose = |s: &crate::scanner::Skill, merged: &Path| -> bool {
         if matches!(args.disposal.as_str(), "keep_both") {
             return false;
@@ -347,7 +347,7 @@ pub fn apply_merge(args: ApplyMergeArgs) -> Result<MergeResult, String> {
         return Err("落点与某侧原件目录重合时不能「都保留」（会覆盖原件）。请换落点或改处置方式。".to_string());
     }
 
-    // ---- 备份先行（§4.6 安全网 1：任何写操作之前；失败 → 整体中止）----
+    // ---- 备份先行（安全网：任何写操作之前；失败 → 整体中止）----
     let ts = chrono::Local::now().format("%Y%m%d-%H%M%S");
     let backup_root = crate::config::get_data_dir().join("merge-backups");
     std::fs::create_dir_all(&backup_root).map_err(|e| format!("创建备份目录失败：{e}"))?;
@@ -414,7 +414,7 @@ pub fn apply_merge(args: ApplyMergeArgs) -> Result<MergeResult, String> {
         _ => { /* keep_both：两侧原件都保留，只新增合并产物 */ }
     }
 
-    // ---- 标签迁移（§4.5）：合并产物继承并集；被处置原件清理挂载 ----
+    // ---- 标签迁移：合并产物继承并集；被处置原件清理挂载 ----
     let mut tags_data = crate::tags::load_tags();
     let a_tags: Vec<String> = tags_data
         .assignments

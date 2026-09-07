@@ -1,12 +1,12 @@
-//! shelf.rs — 技能货架（模块 A 导入侧；PLAN-06 §1.2/§1.4/§1.8/§1.9；MEMO-A §4）
+//! shelf.rs — 技能货架（模块 A 导入侧）
 //!
 //! 流程：repo_browse（clone/archive → 500MB 闸 → index.json 或降级扫描 → pending token）
 //!      → repo_import_commit（逐包 pack::import_pack → .repo.json 溯源 → 清 clone 目录）
 //!
-//! 边界（MEMO-A §3.3）：
+//! 边界：
 //! - clone 目录固定 `<data_dir>/tmp/repo-*`，启动即清区，不给调用方自选权；
 //! - index.json 是不可信远端输入：大小闸 1MB、版本闸、path 逃逸检查；
-//! - 校验永不阻断导入（PLAN-05 D9），sha256 声明不符只警告。
+//! - 校验永不阻断导入（D9），sha256 声明不符只警告。
 
 use crate::config;
 use crate::import;
@@ -17,9 +17,9 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 
-/// clone 后目录总大小上限（PLAN-06 §1.8）
+/// clone 后目录总大小上限
 const MAX_REPO_BYTES: u64 = 500 * 1024 * 1024;
-/// index.json 本体大小上限（MEMO-A §3.3-5）
+/// index.json 本体大小上限
 const MAX_INDEX_BYTES: u64 = 1024 * 1024;
 /// 降级扫描深度（对齐 scanner/import 的 3 层约定）
 const SHELF_SCAN_DEPTH: usize = 3;
@@ -107,7 +107,7 @@ fn new_repo_dir() -> std::io::Result<PathBuf> {
     Ok(dir)
 }
 
-/// 共享的 git 浅克隆通道（PLAN-06 §1.8）：收敛双 clone 通道的唯一入口。
+/// 共享的 git 浅克隆通道：收敛双 clone 通道的唯一入口。
 ///
 /// - 落 `<data_dir>/tmp/repo-*`（App 启动即清区），**不用系统 TEMP**；
 /// - `--depth 1 --single-branch` + 500MB 体积闸，失败/超限即删即报、零残留；
@@ -151,7 +151,7 @@ pub(crate) async fn clone_repo_to_tmp(url: &str) -> Result<PathBuf, String> {
 // 校验工具
 // ---------------------------------------------------------------------------
 
-/// 远端给出的相对路径安全化：拒绝对路径与任何 `..` 分量（MEMO-A §3.3-5 路径逃逸）
+/// 远端给出的相对路径安全化：拒绝对路径与任何 `..` 分量（路径逃逸防护）
 pub fn is_safe_rel_path(p: &str) -> bool {
     let p = p.trim();
     if p.is_empty() {
@@ -352,7 +352,7 @@ fn scan_skillpacks(repo_root: &Path) -> Result<Vec<ShelfPackEntry>, String> {
 // repo_browse
 // ---------------------------------------------------------------------------
 
-/// 浏览仓库货架（§1.8）：git clone 浅克隆；无 git 时降级 archive 通道
+/// 浏览仓库货架：git clone 浅克隆；无 git 时降级 archive 通道
 pub async fn repo_browse(url: &str) -> Result<ShelfPreview, String> {
     let url = url.trim();
     if url.is_empty() {
@@ -467,7 +467,7 @@ fn finish_browse_from_root(
 // repo_import_commit
 // ---------------------------------------------------------------------------
 
-/// 勾选导入（§1.8）：逐包 pack::import_pack（版本闸+sha256 自验全复用）
+/// 勾选导入：逐包 pack::import_pack（版本闸+sha256 自验全复用）
 /// 部分失败不回滚已成功的包；无论成败都清理 clone 目录并注销 token。
 pub fn repo_import_commit(token: &str, selected: &[String]) -> Result<RepoImportResult, String> {
     let pending = SHELF_PENDING
@@ -502,7 +502,7 @@ pub fn repo_import_commit(token: &str, selected: &[String]) -> Result<RepoImport
         }
         match pack::import_pack(&packs_dir, &abs) {
             Ok(info) => {
-                // 溯源旁路文件（MEMO-A §3.3-2：不动 pack.json schema）
+                // 溯源旁路文件（不动 pack.json schema）
                 if let Some(e) = entry {
                     let repo_meta = serde_json::json!({
                         "repo_url": pending.url,

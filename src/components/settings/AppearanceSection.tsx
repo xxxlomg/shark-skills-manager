@@ -58,7 +58,7 @@ export function AppearanceSection({
         ))}
       </div>
 
-      {/* PLAN-10 P2：全局布局切换（立即生效并自动保存） */}
+      {/* P2：全局布局切换（立即生效并自动保存） */}
       <div className="space-y-1.5 border-t border-stroke pt-3">
         <p className="text-sm font-medium text-foreground">导航布局</p>
         <p className="text-[11px] text-text-tertiary">

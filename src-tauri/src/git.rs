@@ -1,4 +1,4 @@
-//! git.rs — 全模块唯一 git 封装层（PLAN-06 §1.6；MEMO-A §3.1 五条纪律）
+//! git.rs — 全模块唯一 git 封装层（五条纪律）
 //!
 //! 1. detect 缓存于会话内（shim 下 git --version 可能数百毫秒，别每帧 fork）；
 //! 2. Windows 固定注入 CREATE_NO_WINDOW（GUI 进程拉 git.exe 会闪控制台）；
@@ -11,7 +11,7 @@ use std::process::Stdio;
 use std::sync::OnceLock;
 use std::time::Duration;
 
-/// clone/push 软超时（PLAN-06 §1.6）
+/// clone/push 软超时
 pub const GIT_TIMEOUT_SECS: u64 = 120;
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -53,7 +53,7 @@ fn truncate_stderr(stderr: &str) -> String {
     stderr.trim().chars().take(300).collect()
 }
 
-/// stderr 关键词 → GitError 分类（§1.6：匹配不上原样透传，不猜）
+/// stderr 关键词 → GitError 分类（匹配不上原样透传，不猜）
 pub fn classify_stderr(stderr: &str) -> GitError {
     let lower = stderr.to_lowercase();
     let auth_keywords = [
@@ -176,8 +176,8 @@ pub async fn run(cwd: Option<&Path>, args: &[&str]) -> Result<String, GitError> 
 }
 
 // ---------------------------------------------------------------------------
-// porcelain 状态探针（发布侧 §1.11：git_status 的仓库健康度字段）
-// 只信退出码与 --porcelain 机器格式（§1.6 纪律）
+// porcelain 状态探针（发布侧：git_status 的仓库健康度字段）
+// 只信退出码与 --porcelain 机器格式
 // ---------------------------------------------------------------------------
 
 /// 工作区是否干净（`status --porcelain` 输出为空）

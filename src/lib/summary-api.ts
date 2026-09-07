@@ -1,5 +1,5 @@
 /**
- * PLAN-13 工作流 S：技能用途速览生成编排。
+ * 工作流 S：技能用途速览生成编排。
  * 统一 AI 层（@/lib/ai）调用 LLM → 解析 JSON 契约 → 持久化 summaries.json。
  * 与翻译同架构：LLM 请求在前端，Rust 仅存。
  */
@@ -66,7 +66,7 @@ export async function generateSkillSummary(
 
 /**
  * 解析 LLM 输出的速览 JSON（容错：剥代码围栏 / 截取首个 {...}）。
- * 解析失败抛错，由 UI 提示重试（PLAN-11 容错模式）。
+ * 解析失败抛错，由 UI 提示重试（容错模式）。
  */
 export function parseSummaryJson(
   text: string

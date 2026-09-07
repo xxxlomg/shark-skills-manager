@@ -106,7 +106,7 @@ export function ImportDialog({ source, onClose, onImported, onPackImported }: Im
     }
   };
 
-  // PLAN-05：zip 内含 pack.json → 整包导入 Packs 库
+  // zip 内含 pack.json → 整包导入 Packs 库
   const handlePackCommit = async () => {
     if (source.kind !== "zip") return;
     setBusy(true);

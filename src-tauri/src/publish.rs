@@ -1,10 +1,10 @@
-//! publish.rs — 模块 A 发布侧（PLAN-06 §1.3/§1.7/§1.11；MEMO-A §3.2/§3.4）
+//! publish.rs — 模块 A 发布侧
 //!
-//! 事务边界（§1.7 要点）：**回滚划在 commit 之前**。
+//! 事务边界：**回滚划在 commit 之前**。
 //! - commit 前任一步失败 → 删 temp pack + index.json 从备份还原，零残留；
 //! - commit 后（push）失败 → 保留本地 commit 只报人话，绝不代用户 reset。
 //!
-//! 凭据立场（§1.3）：git 操作全部 shell out，凭据完全走用户自己的 git 环境，
+//! 凭据立场：git 操作全部 shell out，凭据完全走用户自己的 git 环境，
 //! App 不碰任何凭据。
 
 use crate::config;
@@ -35,7 +35,7 @@ pub struct PublishResult {
     pub rebase_retried: bool,
 }
 
-/// 发布前置校验的失败清单（§3.7：严格模式，Error 阻断并列清单）
+/// 发布前置校验的失败清单（严格模式，Error 阻断并列清单）
 #[derive(Debug, Clone, Serialize)]
 pub struct PublishValidationFailure {
     pub skill: String,
@@ -69,7 +69,7 @@ async fn probe_repo(local_path: &str, remote_url: &str) -> Result<RepoInfo, Stri
     })
 }
 
-/// repo_setup（§1.11）：空目录 git init + 设 remote + 初始 commit；已有仓库校验/补 remote。
+/// repo_setup：空目录 git init + 设 remote + 初始 commit；已有仓库校验/补 remote。
 pub async fn repo_setup(
     local_path: &str,
     remote_url: &str,
@@ -149,7 +149,7 @@ pub async fn repo_setup(
     probe_repo(local_path, remote_url).await
 }
 
-/// §3.7 发布前置校验：包内技能严格模式，任一 Error → 拒绝并列清单
+/// 发布前置校验：包内技能严格模式，任一 Error → 拒绝并列清单
 fn validate_pack_skills(pack_dir: &Path) -> Result<(), Vec<PublishValidationFailure>> {
     let skills_dir = pack_dir.join("skills");
     if !skills_dir.is_dir() {
@@ -201,7 +201,7 @@ fn file_sha256(path: &Path) -> Result<String, String> {
     Ok(hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect())
 }
 
-/// publish_pack（§1.7 全流程）。async：clone/push 可能分钟级。
+/// publish_pack（全流程）。async：clone/push 可能分钟级。
 pub async fn publish_pack(
     pack_id: &str,
     message: Option<String>,
@@ -234,7 +234,7 @@ pub async fn publish_pack_to(
         return Err(git::GitError::DirtyWorktree.message());
     }
 
-    // §3.7：严格校验，带错技能拒绝发布
+    // 严格校验，带错技能拒绝发布
     let pack_dir = packs_dir.join(pack_id);
     if !pack_dir.join("pack.json").is_file() {
         return Err(format!("Pack 不存在: {}", pack_id));
@@ -326,7 +326,7 @@ pub async fn publish_pack_to(
         }
     };
     let detect = pack::detect_pack(&temp_path);
-    // summary_zh 取 pack.json 的 overview（§1.2）
+    // summary_zh 取 pack.json 的 overview
     let summary_zh = std::fs::read_to_string(pack_dir.join("pack.json"))
         .ok()
         .and_then(|t| serde_json::from_str::<pack::PackManifest>(&t).ok())
@@ -423,7 +423,7 @@ pub async fn publish_pack_to(
             })
         }
         Err(git::GitError::NonFastForward) => {
-            // rebase 重试一次；失败保留本地 commit（§1.7：历史操作交还用户）
+            // rebase 重试一次；失败保留本地 commit（历史操作交还用户）
             let rebase = git::run(Some(&repo), &["pull", "--rebase", "origin", &branch]).await;
             if rebase.is_err() {
                 // rebase 失败可能留下中间态 → abort 还原到 commit 后的干净状态

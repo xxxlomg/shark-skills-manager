@@ -20,7 +20,7 @@ export interface Skill {
   tool_id: string;
   /** 同名组代表卡片（B4 代表选取） */
   is_representative: boolean;
-  /** 其他持有同名技能的工具 id 列表（UI 徽标用） */
+  /** 其他持有同名技能的工具 id 列表（扫描聚合元数据，不直接用于卡片展示） */
   other_sources: string[];
   /** 该目录是 junction（hub link 落点） */
   hub_linked: boolean;
@@ -50,6 +50,13 @@ export function skillStatus(s: Skill): TranslateStatus {
   if (s.has_translation) return "ok";
   if (s.translation_lost) return "lost";
   return "no";
+}
+
+/** 主页分组只展示磁盘上仍存在的代表性技能；已删除源的记录保留给清理流程。 */
+export function isLiveLibrarySkill(
+  s: Pick<Skill, "is_representative" | "source_deleted">,
+): boolean {
+  return s.is_representative && !s.source_deleted;
 }
 
 export const STATUS_TEXT: Record<TranslateStatus, string> = {
@@ -200,7 +207,7 @@ export function useSkills() {
    * B4 折叠：同名技能跨工具只留代表卡（后端确定性选取）。
    * 全量 `skills` 仍保留——sync_deleted 依赖全量 id 防误杀译文。
    */
-  const visible = useMemo(() => skills.filter((s) => s.is_representative), [skills]);
+  const visible = useMemo(() => skills.filter(isLiveLibrarySkill), [skills]);
 
   /**
    * 按 scan_label 分组，保持首次出现顺序。

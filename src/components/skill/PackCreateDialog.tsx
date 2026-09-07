@@ -105,7 +105,7 @@ function SkillRow({
   );
 }
 
-/** 新建 Pack 对话框（PLAN-05 P1）：挑选技能 + 元信息 → 静态总结打包。
+/** 新建 Pack 对话框（P1）：挑选技能 + 元信息 → 静态总结打包。
  *  P10a 升级：清单改为三层树（工具 → 合集 → 技能），主译名 + 原名恒显 + 已翻译徽标，
  *  支持「仅已翻译」筛选与跨层联动勾选。 */
 export function PackCreateDialog({ skills, onClose, onCreated, initialSelectedIds }: PackCreateDialogProps) {

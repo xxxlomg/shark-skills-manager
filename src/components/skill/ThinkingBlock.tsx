@@ -1,18 +1,17 @@
 import { memo, useEffect, useRef, useState } from "react";
-import { Brain, ChevronDown, ChevronRight } from "lucide-react";
 
 interface ThinkingBlockProps {
-  /** 思考过程全文（流式累积，仅内存） */
+  /** 思考过程全文（流式期间实时更新，完成后随消息保留） */
   thinking: string;
   /** 是否仍在思考（true=流式滚出） */
   active: boolean;
 }
 
 /**
- * AI 思考过程展示块（仅可视化，不持久化）：
+ * AI 思考过程展示块：
  * - active 时实时滚动跟随输出；
- * - 思考结束（首个正文增量到达）由父组件把 active 置 false，本组件自动收起；
- * - 用户可手动展开回看；再次 active 会重新打开。
+ * - 思考结束后自动收起，历史消息仍可手动展开回看；
+ * - 使用无边框的「> thinking」行，避免把思考过程误认为正文面板。
  */
 export const ThinkingBlock = memo(function ThinkingBlock({ thinking, active }: ThinkingBlockProps) {
   const [manualOpen, setManualOpen] = useState(false);
@@ -40,26 +39,23 @@ export const ThinkingBlock = memo(function ThinkingBlock({ thinking, active }: T
   const open = active || manualOpen;
 
   return (
-    <div className="shrink-0 overflow-hidden rounded-md border border-primary/25 bg-primary/[0.04]">
+    <div className="w-full min-w-0 max-w-full shrink-0 overflow-hidden">
       <button
         type="button"
         onClick={() => setManualOpen((v) => !v)}
-        className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-[11px] text-text-secondary transition-colors hover:bg-primary/[0.06]"
+        className="flex min-w-0 max-w-full items-center gap-1.5 py-1 text-[11px] text-text-tertiary transition-colors hover:text-text-secondary"
+        aria-expanded={open}
       >
-        <Brain className="h-3.5 w-3.5 text-primary" />
-        <span className="font-medium">思考过程</span>
-        {active ? (
-          <span className="font-mono text-[10px] text-text-tertiary">推理中…</span>
-        ) : (
-          <span className="font-mono text-[10px] text-text-tertiary">{thinking.length} 字</span>
-        )}
-        <span className="flex-1" />
-        {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+        <span className="font-mono text-primary">{open ? "v" : ">"}</span>
+        <span className="font-mono font-medium">thinking</span>
+        <span className="font-mono text-[10px] text-text-tertiary/80">
+          {active ? "推理中…" : `${thinking.length} 字`}
+        </span>
       </button>
       {open && (
         <div
           ref={bodyRef}
-          className="max-h-44 overflow-y-auto border-t border-primary/15 px-2.5 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-text-tertiary"
+          className="w-full min-w-0 max-w-full max-h-36 overflow-x-hidden overflow-y-auto break-words border-l border-border/50 pl-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-text-tertiary [overflow-wrap:anywhere]"
         >
           {thinking}
           {active && <span className="animate-pulse">▍</span>}

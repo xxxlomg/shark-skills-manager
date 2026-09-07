@@ -1,11 +1,19 @@
 # shark skills · 技能鲨
 
-> 本地 AI 技能（Agent Skills）管理、翻译与打包桌面工具——让中文用户**一眼看懂、一用就会**。
+<p align="center">
+  <img src="src/assets/brand/fin-light.png" width="48" height="48" alt="shark skills · 技能鲨">
+</p>
 
-鲨 = 敏锐、精准、快。shark skills 把你散落在各个 AI 工具里的 skills 统一扫进来：
-看懂它（流式翻译成中英对照）、管好它（分类 / 搜索 / 状态追踪）、分享它（打包成 `.skillpack` 在平台内流通）。
+<p align="center"><strong>本地 AI 技能（Agent Skills）管理、翻译与打包桌面工具——让中文用户一眼看懂、一用就会。</strong></p>
 
-**正式版入口**：[gitee.com/xxxlomg/shark-skills-manager](https://gitee.com/xxxlomg/shark-skills-manager)
+<p align="center">鲨 = 敏锐、精准、快。把散落在各 AI 工具里的 skills 统一扫进来：看懂它（流式翻译成中英对照）、管好它（分类 / 搜索 / 状态追踪）、分享它（打包成 <code>.skillpack</code> 在平台内流通）。</p>
+
+<p align="center">
+  <a href="README_EN.md">English</a> |
+  <a href="https://gitee.com/xxxlomg/shark-skills-manager">Gitee 源码</a>
+</p>
+
+**正式版入口**：[gitee.com/xxxlomg/shark-skills-manager](https://gitee.com/xxxlomg/shark-skills-manager) ·
 当前发布形态：**Windows x64 绿色解压版**（`shark-skills-manager.exe` 与 `skills/` 同级目录，免安装随取随用）
 
 ---
@@ -21,7 +29,7 @@
 | **Skill Packs** | 勾选技能打包为 `.skillpack`；导入 / 导出 / 安装 / 改名；包内附 `pack.json` + `README.md` + 译文 sidecar |
 | **导入管线** | 本地 zip / Git URL 两种来源；安全解压预览，提交时拍平嵌套、同名自动改名 |
 | **创作工作台** | 全页沉浸式技能创作；七阶段流程导航（发现 → 范围 → 建模 → 设计 → 生成 → 评估 → 打包）；Markdown 编辑 / 分栏 / 预览；附带资源 IDE 式编辑器 + 模板库 + AI 帮写；初稿落地后按正文引用一键生成真实可用的 references/scripts 附件 |
-| **AI 创作** | 模型直出 SKILL.md 原文流式生成，右侧预览实时滚动跟随，可「应用到正文」 |
+| **AI 创作** | 模型在左侧创作对话中流式生成 SKILL.md，确认后可追加、重写或使用为正文 |
 | **统一 AI 层** | 翻译 / AI 创作 / 连接测试统一走设置页 LLM 配置；prompt 模板集中在 `src/lib/ai/prompts/` 一处管理 |
 | **布局外观** | 顶栏 ↔ 侧栏模式切换；侧栏技能库目录树；暗 / 亮双主题 + 四色 accent 预设 |
 | **数据外部化** | 配置 / 译文 / Packs / 导入库统一存放在系统数据目录，重装不丢，旧目录自动迁移 |
@@ -140,6 +148,7 @@ shark-skills-manager/
 ├── config.json          # 扫描路径 / LLM 配置（仅存本地）
 ├── translations.json    # 译文索引
 ├── translations/        # 中英对照译文文件
+├── sessions/             # 创作会话 JSONL 日志与主体映射索引
 ├── packs/               # 已创建的 Skill Packs
 └── imported/            # 由 zip / URL / Pack 安装进来的技能库
 ```
@@ -174,3 +183,7 @@ A：详情抽屉「引用」按钮或 Hub 页「新建引用」——链接（ju
 
 本项目由 xxxlomg 开发，仅供学习和个人使用。
 问题与建议请到[正式版入口](https://gitee.com/xxxlomg/shark-skills-manager)提 Issue。
+
+## 📄 License
+
+本项目基于 **Apache License 2.0** 开源，详见根目录 [LICENSE](LICENSE)。

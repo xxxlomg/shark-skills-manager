@@ -35,7 +35,7 @@ export const STANDARD_DIRS: { dir: string; hint: string }[] = [
   { dir: "examples", hint: "示例——进阶，演示用法（可选）" },
 ];
 
-/** PLAN-12 ③：starter 模板（按目录/扩展名），让小白有起点可改。 */
+/** ③：starter 模板（按目录/扩展名），让小白有起点可改。 */
 export interface StarterTpl {
   label: string;
   content: string;

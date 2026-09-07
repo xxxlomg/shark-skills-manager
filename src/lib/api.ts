@@ -45,7 +45,7 @@ export interface Skill {
   tool_id: string;
   /** 同名组代表卡片（B4 代表选取：tools 顺序即优先级） */
   is_representative: boolean;
-  /** 其他持有同名技能的工具 id 列表（UI 徽标用） */
+  /** 其他持有同名技能的工具 id 列表（扫描聚合元数据，不直接用于卡片展示） */
   other_sources: string[];
   /** 该目录是 junction（hub link 落点） */
   hub_linked: boolean;
@@ -75,9 +75,9 @@ export interface MaskedConfig {
   _has_key: boolean;
   /** 发布仓库配置（未设置为 null） */
   publish_repo: { local_path: string; remote_url: string } | null;
-  /** PLAN-09 P5：当前生效的下载/导入目录 */
+  /** 当前生效的下载/导入目录 */
   download_dir: string;
-  /** PLAN-12：AI 引导是否已永久关闭（点过一次 AI 创作后不再弹） */
+  /** AI 引导是否已永久关闭（点过一次 AI 创作后不再弹） */
   ai_hint_dismissed: boolean;
 }
 
@@ -116,7 +116,7 @@ export function scanSkillsTree(): Promise<string> {
 }
 
 // ---------------------------------------------------------------------------
-// 技能库文件管理器树（PLAN-19）：与 Rust ScanTreeFile/ScanTreeNode/LibraryTreeRoot 对齐
+// 技能库文件管理器树：与 Rust ScanTreeFile/ScanTreeNode/LibraryTreeRoot 对齐
 // ---------------------------------------------------------------------------
 
 export interface LibTreeFile {
@@ -233,17 +233,17 @@ export function loadConfig(): Promise<MaskedConfig> {
   return invoke<MaskedConfig>("load_config");
 }
 
-/** PLAN-09 P5：读取当前生效的下载/导入目录 */
+/** 读取当前生效的下载/导入目录 */
 export function getDownloadDir(): Promise<string> {
   return invoke<string>("get_download_dir");
 }
 
-/** PLAN-09 P5：保存自定义下载/导入目录（空串 = 恢复默认） */
+/** 保存自定义下载/导入目录（空串 = 恢复默认） */
 export function setDownloadDir(dir: string): Promise<void> {
   return invoke("set_download_dir", { dir });
 }
 
-/** PLAN-12：持久化「AI 引导已永久关闭」（点过一次 AI 创作后不再弹提示） */
+/** 持久化「AI 引导已永久关闭」（点过一次 AI 创作后不再弹提示） */
 export function setAiHintDismissed(dismissed: boolean): Promise<void> {
   if (isMockMode()) return Promise.resolve();
   return invoke("set_ai_hint_dismissed", { dismissed });
@@ -268,7 +268,7 @@ export function syncDeleted(currentIds: string[]): Promise<Skill[]> {
 }
 
 // ---------------------------------------------------------------------------
-// Hub 引用层（PLAN-06 §2.7，模块 B / B5 接线）
+// Hub 引用层（模块 B / B5 接线）
 // ---------------------------------------------------------------------------
 
 /** 用户操作语义（Rust serde lowercase） */
@@ -291,7 +291,7 @@ export interface LinkableTool {
 export interface HubLink {
   id: string;
   skill_name: string;
-  /** PLAN-13 H：用户自定义显示名（中文别名；空串 = 未设置，UI 回落 skill_name）。仅展示层，不改 junction 文件夹名 */
+  /** H：用户自定义显示名（中文别名；空串 = 未设置，UI 回落 skill_name）。仅展示层，不改 junction 文件夹名 */
   display_name?: string;
   /** 出处目录（Move 模式记录原件原路径，供溯源） */
   source: string;
@@ -392,7 +392,7 @@ export function hubRescan(): Promise<Skill[]> {
 }
 
 // ---------------------------------------------------------------------------
-// 工具管理（PLAN-06 §2.6/§2.10，B5 收尾）：设置页「工具」面板
+// 工具管理（B5 收尾）：设置页「工具」面板
 // ---------------------------------------------------------------------------
 
 /** 工具全量信息（与 Rust ToolInfo 对齐） */
@@ -567,7 +567,7 @@ export function probeToolDir(dir: string): Promise<ToolDirProbe> {
 }
 
 // ---------------------------------------------------------------------------
-// PLAN-13：标签（T）/ Hub 显示名（H）/ 用途速览（S）
+// 标签（T）/ Hub 显示名（H）/ 用途速览（S）
 // ---------------------------------------------------------------------------
 
 export interface TagDef {
@@ -611,31 +611,31 @@ export function tagKeyHubLink(linkId: string): string {
   return `hublink:${linkId}`;
 }
 
-/** PLAN-13 T：加载标签数据（缺失/损坏时后端回落内置四标签） */
+/** T：加载标签数据（缺失/损坏时后端回落内置四标签） */
 export function loadTags(): Promise<TagsData> {
   if (isMockMode()) return Promise.resolve(structuredClone(MOCK_TAGS));
   return invoke<TagsData>("load_tags");
 }
 
-/** PLAN-13 T：整体保存标签数据（前端持有全量，改完整存） */
+/** T：整体保存标签数据（前端持有全量，改完整存） */
 export function saveTags(data: TagsData): Promise<void> {
   if (isMockMode()) return Promise.resolve();
   return invoke("save_tags", { data });
 }
 
-/** PLAN-13 H：设置 Hub 引用显示名（中文别名；空串 = 清除，仅改账本） */
+/** H：设置 Hub 引用显示名（中文别名；空串 = 清除，仅改账本） */
 export function hubSetDisplayName(linkId: string, name: string): Promise<void> {
   if (isMockMode()) return Promise.resolve();
   return invoke("hub_set_display_name", { linkId, name });
 }
 
-/** PLAN-13 S：加载用途速览 */
+/** S：加载用途速览 */
 export function loadSummaries(): Promise<SummariesData> {
   if (isMockMode()) return Promise.resolve(structuredClone(MOCK_SUMMARIES));
   return invoke<SummariesData>("load_summaries");
 }
 
-/** PLAN-13 S：写入单条用途速览（LLM 生成在前端，Rust 仅持久化） */
+/** S：写入单条用途速览（LLM 生成在前端，Rust 仅持久化） */
 export function writeSummary(params: {
   skillId: string;
   when: string;
@@ -656,7 +656,7 @@ export function writeSummary(params: {
 }
 
 // ---------------------------------------------------------------------------
-// PLAN-13 工作流 M 阶段 2：查重检测 + 手动处置
+// 工作流 M 阶段 2：查重检测 + 手动处置
 // ---------------------------------------------------------------------------
 
 /** 疑似重复组的成员快照（后端 dedup.rs 对齐） */
@@ -720,7 +720,7 @@ export function dupResolveMany(keepId: string, removeIds: string[]): Promise<str
 }
 
 // ---------------------------------------------------------------------------
-// PLAN-18：技能库批量删除（回收站语义 + Hub 引用保护）
+// 技能库批量删除（回收站语义 + Hub 引用保护）
 // ---------------------------------------------------------------------------
 
 /** 删除预检单项：弹窗按它分类「将移入回收站 / 将解除引用 / 无法删除」 */
@@ -844,6 +844,9 @@ export function skillBatchDeleteApply(ids: string[]): Promise<BatchDeleteResult>
         }
         unlinked.push({ id, name: s.name, links_removed: targets.length });
       } else {
+        // 与真实后端移入回收站后的下一次扫描保持一致：源技能不再出现在 mock 列表。
+        const i = MOCK_SKILLS.indexOf(s);
+        if (i >= 0) MOCK_SKILLS.splice(i, 1);
         trashed.push({
           id,
           name: s.name,
@@ -857,7 +860,7 @@ export function skillBatchDeleteApply(ids: string[]): Promise<BatchDeleteResult>
 }
 
 // ---------------------------------------------------------------------------
-// PLAN-13 工作流 M 阶段 3：智能合并（段落拼接/冲突解决在前端，落盘在后端）
+// 工作流 M 阶段 3：智能合并（段落拼接/冲突解决在前端，落盘在后端）
 // ---------------------------------------------------------------------------
 
 /** 附件拷贝指令：从 A/B 的 src_rel 复制到合并产物 dst_rel */
@@ -956,7 +959,7 @@ export function undoMerge(mergeId: string): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// 导入（PLAN-04 §3）
+// 导入
 // ---------------------------------------------------------------------------
 
 export interface ImportCandidate {
@@ -971,12 +974,12 @@ export interface ImportPreview {
   candidates: ImportCandidate[];
   /** URL 导入的 pending 凭证（zip 本地导入为 null） */
   token: string | null;
-  /** zip 内含 pack.json 时的探测结果（PLAN-05：分流到 Pack 导入） */
+  /** zip 内含 pack.json 时的探测结果（分流到 Pack 导入） */
   pack: PackDetect | null;
 }
 
 // ---------------------------------------------------------------------------
-// Skill Packs（PLAN-05 P1）
+// Skill Packs（P1）
 // ---------------------------------------------------------------------------
 
 /** zip 内 pack.json 探测摘要 */
@@ -1181,7 +1184,7 @@ export function packRename(id: string, name: string): Promise<PackInfo> {
 }
 
 // ---------------------------------------------------------------------------
-// 模块 A：Git 仓库货架导入（PLAN-06 §1；MEMO-A）
+// 模块 A：Git 仓库货架导入
 // ---------------------------------------------------------------------------
 
 export interface GitStatusInfo {
@@ -1310,7 +1313,7 @@ export function repoImportCommit(params: {
 }
 
 // ---------------------------------------------------------------------------
-// 模块 A 发布侧（PLAN-06 §1.3/§1.7/§1.11）
+// 模块 A 发布侧
 // ---------------------------------------------------------------------------
 
 export interface RepoInfo {
@@ -1361,7 +1364,7 @@ export function repoSetup(params: {
   });
 }
 
-/** publish_pack：§1.7 事务（校验闸→备份→export→index 合并→commit→push，rebase 重试一次） */
+/** publish_pack：事务（校验闸→备份→export→index 合并→commit→push，rebase 重试一次） */
 export function publishPack(params: {
   packId: string;
   message?: string;
@@ -1395,7 +1398,7 @@ export function savePublishRepo(localPath: string, remoteUrl: string): Promise<v
 }
 
 // ---------------------------------------------------------------------------
-// 模块 C：规范校验（PLAN-06 §3）
+// 模块 C：规范校验
 // ---------------------------------------------------------------------------
 
 export type ValidateMode = "strict" | "diagnostic";
@@ -1442,7 +1445,7 @@ export function skillValidate(
   return invoke<ValidationReport>("skill_validate", { path, mode });
 }
 
-/** C5（PLAN-06 §3.13）：新建技能（模板模式，落点 authored 自有源）。
+/** C5：新建技能（模板模式，落点 authored 自有源）。
  *  同名已存在 → reject Error("EXISTS")。
  *  scaffoldResources：shark-skill-creator 规范层结构补全（references/scripts/assets），
  *  选择后预置引导 README 并在 SKILL.md 模板追加资源导航段。 */
@@ -1665,7 +1668,7 @@ export function skillDeleteFile(skillDir: string, rel: string): Promise<void> {
   return invoke("skill_delete_file", { skillDir, rel });
 }
 
-/** PLAN-11 3.1：导入外部文件（dialog 选源 → 二进制安全 fs::copy，后端归属闸 + rel 安全）。
+/** 导入外部文件（dialog 选源 → 二进制安全 fs::copy，后端归属闸 + rel 安全）。
  * 目标已存在 → Err("EXISTS")。返回落盘后的 rel 与绝对路径。 */
 export function skillImportFile(
   skillDir: string,

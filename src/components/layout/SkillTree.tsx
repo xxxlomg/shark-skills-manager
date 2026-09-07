@@ -12,7 +12,7 @@ import type { Skill } from "@/hooks/useSkills";
 import type { LibTreeNode, LibraryTreeRoot } from "@/lib/api";
 
 /**
- * PLAN-10 P2：侧栏技能库目录树。
+ * P2：侧栏技能库目录树。
  *
  * 数据源 = scan_library_tree 的 `LibraryTreeRoot[]`，与主视图 LibraryExplorer
  * 完全同源，保证侧栏树层级与顶栏/主视图逐层下钻的磁盘真实层级一致：

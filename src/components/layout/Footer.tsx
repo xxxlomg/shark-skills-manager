@@ -1,11 +1,11 @@
 import { GitBranch, GitFork } from "lucide-react";
 import { LINKS } from "@/lib/links";
 
-/** 页脚（PLAN-09 P6）：产品名 + 双仓库链接 + 作者署名
+/** 页脚（P6）：产品名 + 双仓库链接 + 作者署名
  *
  * 两种形态：
  *  - 默认（顶栏模式）：页面底部横排
- *  - compact（侧栏模式，PLAN-10）：紧凑纵向，垫在侧栏最底部
+ *  - compact（侧栏模式）：紧凑纵向，垫在侧栏最底部
  */
 function FooterLink({
   href,

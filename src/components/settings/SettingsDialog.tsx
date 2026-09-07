@@ -69,7 +69,7 @@ interface SettingsDialogProps {
   onOpenChange: (open: boolean) => void;
   /** 保存成功后的回调（用于主界面刷新列表） */
   onSaved?: () => void;
-  /** PLAN-10 P2：全局布局切换（顶栏 / 侧栏） */
+  /** P2：全局布局切换（顶栏 / 侧栏） */
   navMode?: "top" | "sidebar";
   onNavModeChange?: (mode: "top" | "sidebar") => void;
 }
@@ -97,7 +97,7 @@ export function SettingsDialog({ open, onOpenChange, onSaved, navMode, onNavMode
   const [hasExisting, setHasExisting] = useState(false);
   const [testing, setTesting] = useState(false);
 
-  // 工具管理（PLAN-06 §2.6：注册表 + 自定义，即时保存）
+  // 工具管理（注册表 + 自定义，即时保存）
   const [tools, setTools] = useState<ToolInfo[]>([]);
   // 工具包导入（文件选择器交互）：选中目录后自动探测 skills 子文件夹
   const [probe, setProbe] = useState<ToolDirProbe | null>(null);
@@ -115,7 +115,7 @@ export function SettingsDialog({ open, onOpenChange, onSaved, navMode, onNavMode
   // 主题色预设
   const [accent, setAccentState] = useState<AccentId>(() => getAccent());
 
-  // 技能仓库（模块 A 发布侧，§1.3）
+  // 技能仓库（模块 A 发布侧）
   const [repoLocalPath, setRepoLocalPath] = useState("");
   const [repoRemoteUrl, setRepoRemoteUrl] = useState("");
   const [repoBusy, setRepoBusy] = useState(false);
@@ -348,7 +348,7 @@ export function SettingsDialog({ open, onOpenChange, onSaved, navMode, onNavMode
     }
   }, [removing, refreshTools, onSaved]);
 
-  // ---- 技能仓库操作（模块 A 发布侧，§1.3/§1.11）----
+  // ---- 技能仓库操作（模块 A 发布侧）----
 
   const handleRepoPick = useCallback(async () => {
     if (isMockMode()) {

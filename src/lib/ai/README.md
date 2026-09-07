@@ -33,5 +33,5 @@ src/lib/ai/
 
 - LLM 请求目前在前端发起（需要 SSE 流式）。Rust（Tauri）只负责存储 config.json
   与暴露明文 key（`get_llm_api_key`），不直接发 LLM 请求。
-- 创作台 description 即「我的描述」单输入（PLAN-11 阶段 0 删「何时用」），
+- 创作台 description 即「我的描述」单输入（阶段 0 删「何时用」），
   派生在 `AuthoringWorkbench.tsx` 的 `buildDesc`；使用场景由能力 1「优化描述」补全。

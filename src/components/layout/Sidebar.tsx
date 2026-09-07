@@ -29,7 +29,7 @@ import type { Skill } from "@/hooks/useSkills";
 import type { LibraryTreeRoot } from "@/lib/api";
 
 /**
- * PLAN-10 侧栏重构（全高传统侧栏）
+ * 侧栏重构（全高传统侧栏）
  *
  * 顶栏模式隐藏全局 Topbar 后，把顶栏的功能全部收进侧栏：
  *  - 顶部固定：品牌区（含折叠按钮）
@@ -57,7 +57,7 @@ interface SidebarProps {
   selectedSkillId: string | null;
   onOpenCollection: (label: string, path: string[] | null) => void;
   onOpenSkill: (skill: Skill) => void;
-  // 顶栏功能收编（PLAN-10 侧栏重构）
+  // 顶栏功能收编（侧栏重构）
   syncing?: boolean;
   onSync: () => void;
   onOpenSettings: () => void;

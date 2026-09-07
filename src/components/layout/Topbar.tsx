@@ -31,7 +31,7 @@ interface TopbarProps {
   onSearchClick: () => void;
   onSync: () => void;
   onOpenSettings: () => void;
-  /** 打开使用手册白皮书面（PLAN-10 P1） */
+  /** 打开使用手册白皮书面（P1） */
   onOpenManual: () => void;
 }
 
@@ -154,7 +154,7 @@ export function Topbar({
           </button>
         </Tip>
 
-        {/* 关于 / 帮助（PLAN-10 P1）：版本、仓库链接、使用手册 */}
+        {/* 关于 / 帮助（P1）：版本、仓库链接、使用手册 */}
         <DropdownMenu>
           <Tip label="关于 shark skills">
             <DropdownMenuTrigger asChild>

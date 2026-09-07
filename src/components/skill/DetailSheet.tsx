@@ -43,13 +43,13 @@ interface DetailSheetProps {
   onClose: () => void;
   onSettingsOpen?: () => void;
   onTranslateDone?: () => void;
-  /** 引用到其他工具（PLAN-06 §2.8，B5） */
+  /** 引用到其他工具（B5） */
   onLinkSkill?: (skill: Skill) => void;
   /** 打开创作工作台编辑存量技能 */
   onEdit?: (skill: Skill) => void;
-  /** PLAN-13 T：标签（App 层共享状态） */
+  /** T：标签（App 层共享状态） */
   tagsApi?: UseTagsApi;
-  /** PLAN-13 S：用途速览（App 层共享状态） */
+  /** S：用途速览（App 层共享状态） */
   summariesApi?: UseSummariesApi;
 }
 
@@ -367,13 +367,13 @@ export function DetailSheet({
                 </Badge>
               </div>
             )}
-            {/* C3 兼容矩阵徽章已移除（PLAN-09 拍板方案 A）：
+            {/* C3 兼容矩阵徽章已移除（拍板方案 A）：
                 「Claude/Codex 能用」是基础能力而非卖点，常亮徽章是噪音。
                 转换功能保留（必须项），不再以徽章形式展示。 */}
             <p className="mt-2 text-[13px] leading-relaxed text-text-secondary">
               {displayDesc || "无描述"}
             </p>
-            {/* PLAN-13 T：标签挂载 —— chips 点击摘除，picker 挂/新建 */}
+            {/* T：标签挂载 —— chips 点击摘除，picker 挂/新建 */}
             {tagsApi && (
               <div className="mt-2">
                 <TagChipsRow objectKey={tagKeySkill(skill.id)} tagsApi={tagsApi} />
@@ -469,7 +469,7 @@ export function DetailSheet({
               </button>
             )}
 
-            {/* 引用到其他工具（PLAN-06 §2.8，B5）— 已删除的 skill 不显示 */}
+            {/* 引用到其他工具（B5）— 已删除的 skill 不显示 */}
             {!isDeleted && onLinkSkill && (
               <button
                 type="button"
@@ -502,7 +502,7 @@ export function DetailSheet({
         {/* 内容区 */}
         <ScrollArea className="min-h-0 min-w-0 flex-1">
           <div ref={contentRef} className="min-w-0 px-6 py-5">
-            {/* PLAN-13 S：用途速览卡片（未删除的技能才展示） */}
+            {/* S：用途速览卡片（未删除的技能才展示） */}
             {summariesApi && !isDeleted && (
               <SummaryCard
                 skill={skill}

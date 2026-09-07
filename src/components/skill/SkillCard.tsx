@@ -1,7 +1,6 @@
 import { memo, type CSSProperties, type KeyboardEvent } from "react";
 import { FolderSymlink } from "lucide-react";
 import type { Skill } from "@/hooks/useSkills";
-import { toolDisplayName } from "@/hooks/useSkills";
 import { StatusBadge } from "./StatusBadge";
 
 interface SkillCardProps {
@@ -45,25 +44,6 @@ export const SkillCard = memo(function SkillCard({ skill, index, layout, onClick
     },
   };
 
-  /** 安装徽标（两种布局共用） */
-  const metaBadges = (extraCls: string) => (
-    <>
-      {/* 安装徽标：显示该技能还被哪些工具持有（B4 聚合） */}
-      {skill.other_sources.length > 0 && (
-        <span className={`${extraCls} flex flex-wrap items-center gap-1`}>
-          {skill.other_sources.slice(0, 3).map((t) => (
-            <span key={t} className="rounded border border-stroke/60 bg-glass px-1.5 py-px text-[10px] text-text-tertiary">
-              {toolDisplayName(t)} ✓
-            </span>
-          ))}
-          {skill.other_sources.length > 3 && (
-            <span className="text-[10px] text-text-tertiary">+{skill.other_sources.length - 3}</span>
-          )}
-        </span>
-      )}
-    </>
-  );
-
   if (layout === "list") {
     return (
       <div className="card-wrap" style={wrapStyle}>
@@ -90,7 +70,6 @@ export const SkillCard = memo(function SkillCard({ skill, index, layout, onClick
             <p className="truncate font-mono text-[11px] text-text-tertiary">
               {skill.name} · {skill.scan_label}
             </p>
-            {metaBadges("mt-1")}
           </div>
           <div className="relative z-[1] shrink-0">
             <StatusBadge skill={skill} />
@@ -129,7 +108,6 @@ export const SkillCard = memo(function SkillCard({ skill, index, layout, onClick
         <p className="relative z-[1] mt-[3px] font-mono text-[12px] text-text-tertiary">
           {skill.name} · {skill.scan_label}
         </p>
-        {metaBadges("mt-1.5 relative z-[1]")}
         <p className="relative z-[1] mt-[10px] line-clamp-2 text-[12.5px] leading-relaxed text-text-secondary">
           {skill.description_zh || skill.description || "暂无描述"}
         </p>

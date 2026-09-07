@@ -9,7 +9,7 @@ import { SkillCard } from "./SkillCard";
 import type { LibTreeNode, LibTreeFile } from "@/lib/api";
 import type { Skill, LayoutMode } from "@/hooks/useSkills";
 
-/** PLAN-19：技能库「文件管理器」浏览器。
+/** 技能库「文件管理器」浏览器。
  *  视觉与技能库主页完全一致：技能=SkillCard、文件夹=文件夹卡、文件=文件卡，
  *  支持网格/列表切换。行为：技能文件夹/普通文件夹下钻；SKILL.md/文件开抽屉。
  */

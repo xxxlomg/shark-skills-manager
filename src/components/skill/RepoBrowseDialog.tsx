@@ -32,7 +32,7 @@ interface RepoBrowseDialogProps {
 type Stage = "url" | "shelf" | "done";
 
 /**
- * 从技能仓库导入（模块 A；PLAN-06 §1.4）。
+ * 从技能仓库导入（模块 A）。
  * 与技能库页「从 Git 仓库导入」（裸技能）语义不同：本对话框导入 .skillpack 货架，进 Packs 库。
  */
 export function RepoBrowseDialog({ onClose, onImported }: RepoBrowseDialogProps) {

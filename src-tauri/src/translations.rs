@@ -118,7 +118,7 @@ pub fn repair_rename(old_id: &str, new_id: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// id 迁移换键（PLAN-04 §2.3）：md 文件改名 + meta 换键回写。
+/// id 迁移换键：md 文件改名 + meta 换键回写。
 /// 旧键不存在时 no-op，幂等。rename 失败回退复制，杜绝「meta 新键 + md 旧名」残留。
 pub fn rekey(old_id: &str, new_id: &str) -> Result<(), String> {
     let mut index = load_all_meta();

@@ -35,7 +35,7 @@ import {
 import type { LayoutMode } from "@/hooks/useSkills";
 
 /**
- * C9 创作页（PLAN-07 W1）：列表态 ↔ 工作台态。
+ * C9 创作页（W1）：列表态 ↔ 工作台态。
  * 工作台状态由 App 层持有并在 App 层整页渲染（侧栏布局壳切换时 CreationView 会
  * 卸载重挂，若自持工作台状态会丢失）；本组件只负责触发/通知。
  * - 卡片点击 / 新建 → App 打开全页 AuthoringWorkbench（退役 CreationEditDialog）；

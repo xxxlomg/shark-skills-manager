@@ -1,7 +1,7 @@
 import type { TagsData } from "@/lib/api";
 
 /**
- * mock 标签数据（PLAN-13 工作流 T，?mock=1 预览用）。
+ * mock 标签数据（工作流 T，?mock=1 预览用）。
  * 内置四标签（开发/生图/媒体/效率）+ 一个自定义标签示例；
  * 挂载示例落在 builtin 两个演示技能上。
  */

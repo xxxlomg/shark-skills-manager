@@ -113,16 +113,16 @@ function readNavMode(): NavMode {
 function App() {
   const { skills, groups, loading, error, sync, refresh } = useSkills();
   const { folders, addFolder } = useCreatedFolders();
-  // PLAN-13：标签（T）与用途速览（S）状态提升到 App，跨视图共享
+  // 标签（T）与用途速览（S）状态提升到 App，跨视图共享
   const tagsApi = useTags();
   const summariesApi = useSummaries();
 
   const [tab, setTab] = useState<ViewId>(DEFAULT_VIEW);
   const [view, setView] = useState<View>({ type: "home" });
-  // PLAN-10 P1：使用手册白皮书面（全屏覆盖层，右上角「关于」菜单进入）
+  // P1：使用手册白皮书面（全屏覆盖层，右上角「关于」菜单进入）
   const [manualOpen, setManualOpen] = useState(false);
   const [layout, setLayout] = useState<LayoutMode>(readLayout);
-  // PLAN-10 P2：全局布局切换（顶栏 ↔ 侧栏），持久化 sm:navmode
+  // P2：全局布局切换（顶栏 ↔ 侧栏），持久化 sm:navmode
   const [navMode, setNavMode] = useState<NavMode>(readNavMode);
   const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
@@ -131,7 +131,7 @@ function App() {
   const [syncing, setSyncing] = useState(false);
   const [scanTreeOpen, setScanTreeOpen] = useState(false);
 
-  // PLAN-19：技能库文件管理器目录树缓存（App 层持有，进程内构建一次，手动刷新时重建）
+  // 技能库文件管理器目录树缓存（App 层持有，进程内构建一次，手动刷新时重建）
   const [libraryTree, setLibraryTree] = useState<LibraryTreeRoot[] | null>(null);
   const loadLibraryTree = useCallback(async (force = false) => {
     try {
@@ -145,7 +145,7 @@ function App() {
     loadLibraryTree();
   }, [loadLibraryTree]);
 
-  // 模块 A 发布侧：git/仓库健康度（发布按钮使能依据，§1.11）
+  // 模块 A 发布侧：git/仓库健康度（发布按钮使能依据）
   const [gitInfo, setGitInfo] = useState<GitStatusInfo | null>(null);
   const [publishingId, setPublishingId] = useState<string | null>(null);
   const refreshGitInfo = useCallback(() => {
@@ -169,7 +169,7 @@ function App() {
     setView({ type: "category", label });
   }, []);
 
-  // PLAN-10 P2：侧栏目录树节点直达（工具 / 合集）；合集带 path 段定位
+  // P2：侧栏目录树节点直达（工具 / 合集）；合集带 path 段定位
   const handleOpenCollection = useCallback(
     (label: string, path: string[] | null) => {
       setTab("lib");
@@ -182,7 +182,7 @@ function App() {
     setView({ type: "home" });
   }, []);
 
-  // PLAN-14：进入「全部技能」扁平视图
+  // 进入「全部技能」扁平视图
   const handleAllSkills = useCallback(() => {
     setTab("lib");
     setView({ type: "all" });
@@ -218,7 +218,7 @@ function App() {
     }
   }, [sync, loadLibraryTree]);
 
-  // Skill Packs（PLAN-05 P1：真实数据）
+  // Skill Packs（P1：真实数据）
   const [packs, setPacks] = useState<PackInfo[]>([]);
   const [packDialogOpen, setPackDialogOpen] = useState(false);
   // 从技能库批量勾选打包时携入的预选技能 id（null = 无预选，如 Packs 页「新建 Pack」）
@@ -226,17 +226,17 @@ function App() {
   // 技能库页头（HomeView/CategoryView）左上角「新建文件夹」按钮 → App 级弹窗。
   // parentLabel 由当前视图推导：home→null（全新路径模式）；分类→当前工具/合集。
   const [libFolderDialogOpen, setLibFolderDialogOpen] = useState(false);
-  // PLAN-07：工作台沉浸态 → 隐藏 StatBar/TabNav；工作台状态提升到 App（避免侧栏布局壳
+  // 工作台沉浸态 → 隐藏 StatBar/TabNav；工作台状态提升到 App（避免侧栏布局壳
   // 切换导致 CreationView 卸载重挂、丢失工作台状态）
   const [wbActive, setWbActive] = useState(false);
-  // PLAN-13 M 阶段 2：查重面板 + 对比/合并工作台（沉浸态同创作台模式，状态在 App 层）
+  // M 阶段 2：查重面板 + 对比/合并工作台（沉浸态同创作台模式，状态在 App 层）
   const [dupOpen, setDupOpen] = useState(false);
   const [dupPair, setDupPair] = useState<{
     a: DupMember;
     b: DupMember;
     group: DupGroup;
   } | null>(null);
-  // PLAN-15 阶段 4：N 路合并工作台（全页，替代原 MultiMergeDialog 弹窗）
+  // 阶段 4：N 路合并工作台（全页，替代原 MultiMergeDialog 弹窗）
   const [multiMerge, setMultiMerge] = useState<{
     group: DupGroup;
     baseId: string;
@@ -269,11 +269,11 @@ function App() {
     loadPacks();
   }, [loadPacks]);
 
-  // ---- 导入（PLAN-04 §3：zip 本地 + URL 远程）----
+  // ---- 导入（zip 本地 + URL 远程）----
   const [importSource, setImportSource] = useState<ImportSource | null>(null);
   const [urlDialogOpen, setUrlDialogOpen] = useState(false);
 
-  // ---- Hub 引用（PLAN-06 §2.8，B5）：新建引用对话框由 App 统一持有，
+  // ---- Hub 引用（B5）：新建引用对话框由 App 统一持有，
   // Hub 页与技能详情页共用同一实例 ----
   const [linkDialogOpen, setLinkDialogOpen] = useState(false);
   const [linkInitialSkillId, setLinkInitialSkillId] = useState<string | null>(null);
@@ -404,7 +404,7 @@ function App() {
   }, []);
 
   const handleImportPack = useCallback(() => {
-    // 与 zip 导入同入口：后端按 pack.json 自动分流（PLAN-05 §3）
+    // 与 zip 导入同入口：后端按 pack.json 自动分流
     handleZipImport();
   }, [handleZipImport]);
 
@@ -492,7 +492,7 @@ function App() {
     [refresh, refreshGitInfo]
   );
 
-  // 发布按钮禁用原因（§1.9 降级立场：不静默失败，明确引导）
+  // 发布按钮禁用原因（降级立场：不静默失败，明确引导）
   const publishDisabledReason = useMemo(() => {
     if (!gitInfo) return "正在检测 git 环境…";
     if (!gitInfo.installed)
@@ -627,11 +627,11 @@ function App() {
     return skills.find((s) => s.id === selectedSkill.id) ?? selectedSkill;
   }, [skills, selectedSkill]);
 
-  // PLAN-10 P2：侧栏仅在「非沉浸态 + 侧栏模式」下渲染
+  // P2：侧栏仅在「非沉浸态 + 侧栏模式」下渲染
   const sidebarShown = navMode === "sidebar";
 
   // ===== 视图分发（顶栏 / 侧栏两种布局共用，抽成变量避免重复）=====
-  // PLAN-06 §7.6 数据驱动：按 view-registry 的 tab 查 RENDERERS 表渲染，
+  // 数据驱动：按 view-registry 的 tab 查 RENDERERS 表渲染，
   // 语义与 TabNav/Sidebar 注册表一致；lib 分支内部再做 error/loading/子视图分流。
   const renderers: Record<ViewId, () => ReactNode> = {
     packs: () => (
@@ -676,7 +676,7 @@ function App() {
           ))}
         </div>
       ) : view.type === "all" ? (
-        /* PLAN-14：全部技能扁平视图（批量打标） */
+        /* 全部技能扁平视图（批量打标） */
         <AllSkillsView
           skills={skills}
           onSkillClick={handleSkillClick}
@@ -835,7 +835,7 @@ function App() {
     <>
       <BackgroundFX />
 
-      {/* PLAN-10 侧栏重构：创作工作台沉浸态 → 整页渲染（侧栏/顶栏布局均让位）。
+      {/* 侧栏重构：创作工作台沉浸态 → 整页渲染（侧栏/顶栏布局均让位）。
           状态在 App 层，避免侧栏布局壳切换导致 CreationView 卸载重挂、工作台丢失 */}
       {wbActive ? (
         <main className="workbench-canvas flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -851,7 +851,7 @@ function App() {
           </div>
         </main>
       ) : multiMerge ? (
-        /* PLAN-15 阶段 4：N 路合并工作台（10+ 同名技能，全页沉浸态） */
+        /* 阶段 4：N 路合并工作台（10+ 同名技能，全页沉浸态） */
         <main className="workbench-canvas flex h-screen min-h-0 flex-col overflow-hidden">
           <div className="mx-auto flex w-full min-h-0 flex-1 flex-col px-[26px]">
             <MultiMergeWorkbench
@@ -870,8 +870,8 @@ function App() {
           </div>
         </main>
       ) : dupPair ? (
-        /* PLAN-13 M 阶段 2：对比/合并工作台沉浸态（同创作台模式）
-           PLAN-15 §2：固定视口工作台壳 —— 页面不滚，仅内容视口滚，footer 常驻可见 */
+        /* M 阶段 2：对比/合并工作台沉浸态（同创作台模式）
+           固定视口工作台壳 —— 页面不滚，仅内容视口滚，footer 常驻可见 */
         <main className="workbench-canvas flex h-screen min-h-0 flex-col overflow-hidden">
           <div className="mx-auto flex w-full min-h-0 flex-1 flex-col px-[26px]">
             <MergeWorkbench
@@ -895,7 +895,7 @@ function App() {
           </div>
         </main>
       ) : dupOpen ? (
-        /* PLAN-16 阶段 6：查重工作台（主从式全页，替代原弹窗） */
+        /* 阶段 6：查重工作台（主从式全页，替代原弹窗） */
         <main className="workbench-canvas flex h-screen min-h-0 flex-col overflow-hidden">
           <div className="mx-auto flex w-full min-h-0 flex-1 flex-col px-[26px]">
             <DupWorkbench
@@ -916,7 +916,7 @@ function App() {
         </main>
       ) : (
         <>
-      {/* PLAN-10 侧栏重构：仅顶栏模式渲染全局 Topbar；侧栏模式其功能已收编进 Sidebar */}
+      {/* 侧栏重构：仅顶栏模式渲染全局 Topbar；侧栏模式其功能已收编进 Sidebar */}
       {navMode === "top" && (
         <Topbar
           stats={stats}
@@ -928,7 +928,7 @@ function App() {
         />
       )}
 
-      {/* ===== PLAN-10 侧栏重构：布局壳 =====
+      {/* ===== 侧栏重构：布局壳 =====
           侧栏模式：全高两栏，页面不滚，侧栏树区与主内容区各自独立滚动；
                     顶栏功能（品牌/搜索/工具集/页脚）已收编进 Sidebar。
           顶栏模式：Topbar + 页面级滚动 + Footer（原有行为）。
@@ -977,7 +977,7 @@ function App() {
         </>
       )}
 
-      {/* PLAN-10 P1：使用手册白皮书面（全屏覆盖层） */}
+      {/* P1：使用手册白皮书面（全屏覆盖层） */}
       {manualOpen && <ManualPage onClose={() => setManualOpen(false)} />}
 
       <DetailSheet

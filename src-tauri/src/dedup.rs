@@ -1,6 +1,6 @@
-//! PLAN-13 工作流 M 阶段 2：查重检测（本地快路径，无 LLM）+ 手动处置（备份 + 回收站）。
+//! 工作流 M 阶段 2：查重检测（本地快路径，无 LLM）+ 手动处置（备份 + 回收站）。
 //!
-//! 检测算法（§4.1，Boss 简化版）：
+//! 检测算法（简化版）：
 //! 1. 全等检测：SKILL.md 正文（剥 frontmatter）SHA-256 全等但 id 不同 → 「内容全等」组；
 //! 2. 同名检测：归一化名称相等（docker-ps / Docker_PS → dockerps）→ 「同名」组；
 //!    不再做编辑距离/描述重叠的加权相似度，也不展示百分比（Boss：同名即相似）。
@@ -366,7 +366,7 @@ pub fn detect(skills: &[Skill]) -> Vec<DupGroup> {
 ///
 /// canonicalize 归一（UNC 前缀/大小写/符号链接穿透）后与台账 target 比对，
 /// 风格与 resolve_keep 的出处比对一致；目录不存在时返回 false（不误伤）。
-/// Move 模式在账本中归一为 Copy（hub.rs §2.7），同样命中。
+/// Move 模式在账本中归一为 Copy（hub.rs 的 Move 记账语义），同样命中。
 pub fn is_ledger_copy_target(skill_dir: &str, ledger: &crate::hub::LinksLedger) -> bool {
     let canon = std::fs::canonicalize(Path::new(skill_dir)).unwrap_or_default();
     if canon.as_os_str().is_empty() {
@@ -410,11 +410,11 @@ pub fn resolve_keep(keep_id: &str, remove_id: &str) -> Result<String, String> {
         return Err(format!("要删除的技能目录不存在：{}", remove.skill_dir));
     }
 
-    // 地雷 1（§4.5）：junction 落点禁止进回收站
+    // 地雷 1：junction 落点禁止进回收站
     if remove.hub_linked {
         return Err("该技能是 Hub 引用的 junction 落点，不能直接进回收站。请先在 Hub 解除引用，或改为保留它、处置另一侧。".to_string());
     }
-    // 地雷 2（§4.5）：作为账本引用出处的技能删除会让引用断链
+    // 地雷 2：作为账本引用出处的技能删除会让引用断链
     let ledger = crate::hub::load_ledger(&crate::config::get_data_dir());
     let remove_canon = std::fs::canonicalize(&remove_dir).unwrap_or_else(|_| remove_dir.clone());
     let referencing = ledger
@@ -433,7 +433,7 @@ pub fn resolve_keep(keep_id: &str, remove_id: &str) -> Result<String, String> {
         ));
     }
 
-    // 备份先行（§4.6 安全网 1：任何写操作之前完成；失败 → 整体中止）
+    // 备份先行（安全网：任何写操作之前完成；失败 → 整体中止）
     let ts = chrono::Local::now().format("%Y%m%d-%H%M%S");
     let backup_root = crate::config::get_data_dir().join("merge-backups");
     std::fs::create_dir_all(&backup_root)

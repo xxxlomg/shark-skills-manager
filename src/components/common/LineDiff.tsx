@@ -1,5 +1,5 @@
 /**
- * PLAN-13 工作流 M：零依赖按行 diff（LCS 实现），与 CodeEditor 同思路不引第三方库。
+ * 工作流 M：零依赖按行 diff（LCS 实现），与 CodeEditor 同思路不引第三方库。
  *
  * 两种视图（LineDiff 头部可切换，localStorage 记忆）：
  * - unified（默认）：git 式单列，红删绿增；

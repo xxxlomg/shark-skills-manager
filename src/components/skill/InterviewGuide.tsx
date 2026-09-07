@@ -43,6 +43,7 @@ interface InterviewGuideProps {
     id: string;
     role: "user" | "assistant" | "system";
     content: string;
+    reasoning?: string;
   }>;
 }
 
@@ -120,7 +121,7 @@ export function InterviewGuide({
     // 会话恢复：预填历史对话消息（AI 基于既有上下文继续；思考过程已在面板侧随消息展示）
     for (const im of initialMessages ?? []) {
       if (im.role === "user") engine.pushUser(im.content);
-      else if (im.role === "assistant") engine.pushAssistant(im.content, undefined, "discover");
+      else if (im.role === "assistant") engine.pushAssistant(im.content, undefined, "discover", im.reasoning);
     }
     // 每场访谈重置连续失败计数：不把上一场的失败带过来（防永久降级）
     resetInterviewAgentState();
@@ -184,7 +185,7 @@ export function InterviewGuide({
     const e = engineRef.current;
     if (!e) return;
     setThinking(true);
-    // 每轮开始：清空上一轮思考视觉（仅内存，不持久化）
+    // 临时块只展示当前尚未归档的思考；已完成的 thinking 会挂在 assistant 消息上。
     setReasoningText("");
     setReasoningDone(false);
     reasoningRef.current = "";
@@ -201,8 +202,6 @@ export function InterviewGuide({
           },
         });
         const act = res.action;
-        // 本轮回合并结束：思考自动收起（ThinkingBlock 响应 active 变化）
-        setReasoningDone(true);
 
         // 降级明示：连续失败已切换本地引导（仅提示一次）
         if (res.degraded && !degradedNotifiedRef.current) {
@@ -230,19 +229,25 @@ export function InterviewGuide({
         }
 
         if (act.action === "done") {
+          setReasoningDone(true);
           handleReady();
           return;
         }
 
         // 边界控制：即使 LLM 仍想追问，只要信息充分或达到轮数上限就强制收敛
         if (e.shouldTerminate()) {
+          setReasoningDone(true);
           handleReady();
           return;
         }
 
         // action === ask
         const question = (act.question || "").trim();
-        if (!question) { handleReady(); return; }
+        if (!question) {
+          setReasoningDone(true);
+          handleReady();
+          return;
+        }
 
         // 前端去重：重复则要求 AI 换主题（有限次）
         if (e.isDuplicate(question) && dupRetry < MAX_DUP_RETRY) {
@@ -252,19 +257,30 @@ export function InterviewGuide({
         }
 
         e.markAsked(question);
-        e.pushAssistant(question, act.options, act.stage || "discover");
+        const reasoning = reasoningRef.current || res.thinking || "";
+        const assistantMessage = e.pushAssistant(
+          question,
+          act.options,
+          act.stage || "discover",
+          reasoning,
+        );
         // 新问题就位：输入框提示词复位（上轮「自由输入」引导已失效）
         setInputPlaceholder("用自然语言回答…");
-        // 思考过程持久化：作为 assistant 消息的 reasoning 附注进会话事件日志
-        // （res.thinking 与 reasoningRef 双源，任一非空即记录）
-        const reasoning = reasoningRef.current || res.thinking || "";
+        // 思考过程同时绑定到 assistant 消息和事件，当前页面与历史恢复使用同一数据源。
         onRecord?.({
           kind: "assistant_msg",
           content: question,
-          extra: reasoning ? { reasoning } : undefined,
+          extra: {
+            messageId: assistantMessage.id,
+            ...(reasoning ? { reasoning } : {}),
+          },
         });
         e.currentQuestion = { question, options: act.options, field: act.field, stage: act.stage || "discover" };
         setCurrentQ({ question, options: act.options, field: act.field, stage: act.stage || "discover", analysis: act.analysis });
+        // 归档后移除临时块，避免同一段 thinking 同时显示在消息下方和列表底部。
+        setReasoningText("");
+        setReasoningDone(false);
+        reasoningRef.current = "";
         sync();
         return;
       }
@@ -285,8 +301,9 @@ export function InterviewGuide({
     e.pushSystem("信息收集完成，正在综合全部对话生成技能正文…");
     sync();
     setCurrentQ(null);
-    // 综合结构化信息 + 完整对话转录，供生成 Prompt 全量参考
-    const context = `${e.buildStructuredContext()}\n\n【完整访谈记录】\n${e.fullTranscript()}`;
+    // 只把结构化字段交给正文生成。完整转录属于会话记录，继续由
+    // InterviewEngine/session 维护，不能被当作待写入 SKILL.md 的正文素材。
+    const context = e.buildStructuredContext();
     setTimeout(() => onComplete(context), 500);
   };
 
@@ -445,14 +462,21 @@ function MessageBubble({ msg }: { msg: InterviewMessage }) {
   }
   const isAI = msg.role === "assistant";
   return (
-    <div className={cn("flex gap-2", isAI ? "justify-start" : "justify-end")}>
+    <div className={cn("flex items-start gap-2", isAI ? "justify-start" : "justify-end")}>
       {isAI && (
         <span className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full bg-primary/10">
           <Bot className="h-3 w-3 text-primary" />
         </span>
       )}
-      <div className={cn("anim-jelly-in max-w-[85%] rounded-lg px-3 py-2 text-[12px] leading-relaxed", isAI ? "bg-glass-1 text-text-primary" : "bg-primary/10 text-text-primary")}>
-        <p className="whitespace-pre-line">{msg.content}</p>
+      <div className={cn(isAI && "flex w-fit min-w-0 max-w-[85%] flex-col items-start gap-1")}>
+        <div className={cn("anim-jelly-in w-fit max-w-full rounded-lg px-3 py-2 text-[12px] leading-relaxed", isAI ? "bg-glass-1 text-text-primary" : "bg-primary/10 text-text-primary")}>
+          <p className="whitespace-pre-line break-words">{msg.content}</p>
+        </div>
+        {isAI && msg.reasoning && (
+          <div className="w-full min-w-0 max-w-full">
+            <ThinkingBlock thinking={msg.reasoning} active={false} />
+          </div>
+        )}
       </div>
       {!isAI && (
         <span className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full bg-glass-2">

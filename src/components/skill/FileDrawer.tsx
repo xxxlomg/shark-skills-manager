@@ -42,7 +42,7 @@ interface FileDrawerProps {
   onClose: () => void;
 }
 
-/** PLAN-19：资源文件抽屉。文本可编辑保存（skill_write_file 归属闸），图片渲染，其余二进制只读。 */
+/** 资源文件抽屉。文本可编辑保存（skill_write_file 归属闸），图片渲染，其余二进制只读。 */
 export function FileDrawer({ file, open, onClose }: FileDrawerProps) {
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);

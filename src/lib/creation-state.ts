@@ -40,12 +40,90 @@ export type CreationStateStatus =
 
 export type InterviewRole = "user" | "assistant" | "system";
 
+/** The canonical file represented by a body generation result. */
+export const AUTHORING_BODY_FILE = "SKILL.md" as const;
+
+/** Message-level classification used by chat history consumers. */
+export type AuthoringMessageKind =
+  | "chat"
+  | "body_candidate"
+  | "attachment_candidate";
+
+export type AuthoringResultKind = "body" | "attachment";
+export type AuthoringResultAction = "append" | "replace" | "use" | "write";
+export type AuthoringResultStatus = "pending" | "applied" | "dismissed";
+
+export interface AuthoringResultMeta {
+  kind: AuthoringResultKind;
+  /** Relative file path; body results default to `SKILL.md` when normalized. */
+  fileRel?: string;
+  bodyEmpty?: boolean;
+  applied?: AuthoringResultAction;
+  /** Explicit status for history consumers; missing means pending unless applied. */
+  status?: AuthoringResultStatus;
+}
+
+/**
+ * Resolve the file represented by a result without changing legacy payloads.
+ * Attachment results must keep their existing path; only body results have a
+ * safe default because older events did not persist a path for them.
+ */
+export function getAuthoringResultFileRel(
+  result: Pick<AuthoringResultMeta, "kind" | "fileRel">,
+): string | undefined {
+  const fileRel = typeof result.fileRel === "string" ? result.fileRel.trim() : "";
+  if (fileRel) return fileRel;
+  return result.kind === "body" ? AUTHORING_BODY_FILE : undefined;
+}
+
+/** Infer the current result state while honoring explicit historical status. */
+export function getAuthoringResultStatus(
+  result: Pick<AuthoringResultMeta, "status" | "applied">,
+): AuthoringResultStatus {
+  return result.status ?? (result.applied ? "applied" : "pending");
+}
+
+/**
+ * Normalize result metadata at the UI/persistence boundary.
+ *
+ * This keeps old messages source-compatible while making every body result
+ * addressable as `SKILL.md`. Attachment paths are never invented.
+ */
+export function normalizeAuthoringResultMeta(
+  result: AuthoringResultMeta | undefined,
+  status?: AuthoringResultStatus,
+): AuthoringResultMeta | undefined {
+  if (!result) return undefined;
+
+  const { fileRel: _legacyFileRel, ...rest } = result;
+  const fileRel = getAuthoringResultFileRel(result);
+  return {
+    ...rest,
+    ...(fileRel ? { fileRel } : {}),
+    status: status ?? getAuthoringResultStatus(result),
+  };
+}
+
 export interface InterviewMessage {
   id: string;
   role: InterviewRole;
   content: string;
+  /** Optional for backward compatibility; history projections always set it. */
+  messageKind?: AuthoringMessageKind;
   /** AI 思考过程（会话事件恢复后随消息展示；仅助手消息携带） */
   reasoning?: string;
+  /** 需要用户确认的正文/附件产物，确认前不修改编辑器或磁盘。 */
+  result?: AuthoringResultMeta;
+}
+
+/** Derive the explicit message classification for legacy in-memory messages. */
+export function getAuthoringMessageKind(
+  message: Pick<InterviewMessage, "messageKind" | "result">,
+): AuthoringMessageKind {
+  if (message.messageKind) return message.messageKind;
+  if (message.result?.kind === "body") return "body_candidate";
+  if (message.result?.kind === "attachment") return "attachment_candidate";
+  return "chat";
 }
 
 /** Conversation state is kept separate from the structured artifact state. */

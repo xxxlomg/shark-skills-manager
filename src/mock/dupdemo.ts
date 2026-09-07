@@ -1,5 +1,5 @@
 /**
- * PLAN-13 工作流 M 阶段 2 mock：查重演示数据（?mock=1 预览用）。
+ * 工作流 M 阶段 2 mock：查重演示数据（?mock=1 预览用）。
  * 成员指向虚拟目录 /mock/dupdemo/*，与 MOCK_SKILLS 隔离；
  * readSkillFile / skillListFiles 对这些路径返回本文件的演示内容，
  * 不触碰既有 mock（MOCK_RAW 哈希对齐的速览演示不受影响）。
@@ -74,7 +74,7 @@ const DEMO_FILES: Record<string, [string, string]> = {
 };
 
 /**
- * 长文演示（PLAN-15 验收案例：对应 Boss 实测的 design-taste-frontend，~1200 行）。
+ * 长文演示（验收案例：对应 Boss 实测的 design-taste-frontend，~1200 行）。
  * A/B 章节标题相同、段落微差 → mergeBodies 产生大量段落冲突，
  * 用于验证滚动域（页面不滚 / 内容视口滚 / footer 常驻）与冲突列表渲染。
  */
@@ -194,7 +194,7 @@ export const MOCK_DUP_GROUPS: DupGroup[] = [
     id: "g-0003",
     kind: "same_name",
     score: 0.5,
-    reason: "同名长文技能（~1200 行）——PLAN-15 滚动域验收案例，段落微差需逐节确认。",
+    reason: "同名长文技能（~1200 行）——滚动域验收案例，段落微差需逐节确认。",
     members: [
       mem("claude|design-taste-frontend", "design-taste-frontend", "前端设计品味", "Claude", "claude-code", "long-a-design-taste", { emoji: "🎨", tr: true, hash: "h-la", len: 60000, mt: 1754000000 }),
       mem("imported|design-taste-frontend", "design-taste-frontend", "前端设计品味", "imported", "imported", "long-b-design-taste", { emoji: "🎨", hash: "h-lb", len: 60100, mt: 1755100000 }),
@@ -238,7 +238,7 @@ export const MOCK_DUP_GROUPS: DupGroup[] = [
     id: "g-0006",
     kind: "identical",
     score: 1.0,
-    reason: "三份内容全等的副本——PLAN-16 V==1 特例验收组：无需合并，直接保留基准处置其余。",
+    reason: "三份内容全等的副本——V==1 特例验收组：无需合并，直接保留基准处置其余。",
     members: [
       mem("claude|skills-shark-packs", "skills-shark-packs", "打包流通", "Claude", "claude-code", "v1-packs", { emoji: "📦", tr: true, hash: "h-p", len: 300, mt: 1755200000 }),
       mem("imported|skills-shark-packs-2", "skills-shark-packs", "打包流通", "imported", "imported", "v2-packs", { emoji: "📦", hash: "h-p", len: 300, mt: 1755000000 }),

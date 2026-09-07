@@ -34,7 +34,7 @@ pub struct Skill {
     /// 是否为同名组的代表卡片（B4 代表选取：tools 顺序即优先级）
     #[serde(default = "default_true_bool")]
     pub is_representative: bool,
-    /// 其他持有同名技能的工具 id 列表（UI 徽标/切换用）
+    /// 其他持有同名技能的工具 id 列表（扫描聚合元数据）
     #[serde(default)]
     pub other_sources: Vec<String>,
     /// 该目录是 junction（hub link 落点）
@@ -270,7 +270,7 @@ fn scan_dir_recursive(
             .unwrap_or_default();
 
         // 内置内部技能（纯内部资源，仅创作工作台隐式调用）：整棵子树跳过，
-        // 不注册为可见技能（PLAN-17）。白名单 + 内置目录双重判定，不误伤用户同名技能。
+        // 不注册为可见技能。白名单 + 内置目录双重判定，不误伤用户同名技能。
         if crate::config::is_internal_skill_dir(&child) {
             continue;
         }
@@ -621,6 +621,42 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
     }
 
+    #[test]
+    fn other_sources_are_unique_by_tool() {
+        let root = tmp_root("unique-sources");
+        let builtin = root.join("builtin");
+        let imported_a = root.join("imported-a");
+        let imported_b = root.join("imported-b");
+        let name = "skills-shark-quickstart";
+
+        make_skill(&builtin, name);
+        make_skill(&imported_a, name);
+        let nested = imported_b.join("pack").join(name);
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(
+            nested.join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: nested\n---\nbody"),
+        )
+        .unwrap();
+
+        let skills = live(scan_all_skills(&[
+            target(&builtin, "builtin", "builtin"),
+            target(&imported_a, "imported", "导入"),
+            target(&imported_b, "imported", "导入"),
+        ]));
+        let builtin_skill = skills
+            .iter()
+            .find(|s| s.id == format!("builtin|{name}"))
+            .unwrap();
+
+        assert_eq!(
+            builtin_skill.other_sources,
+            vec!["imported".to_string()],
+            "同一工具的多个同名实例只能显示一个来源徽标"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
     /// D7 disjoint：嵌套扫描根不双身份。祖先根遍历到嵌套根边界停止下钻，
     /// 内根独立扫描 → 内容只归最内层根，归属 = 用户选定的最内层模块。
     #[test]
@@ -935,7 +971,7 @@ mod tests {
         assert!(text.contains("helper.py"), "脚本资源必须列出: {text}");
         assert!(text.contains("notes.md"), "引用文档必须列出: {text}");
 
-        // PLAN-19：结构化树 skill_id 须与 scan_all_skills 的 id 对拍，文件 abs_path 须真实存在。
+        // 结构化树 skill_id 须与 scan_all_skills 的 id 对拍，文件 abs_path 须真实存在。
         let trees = scan_library_tree(&[target(&tool, "claude-code", "Claude Code")]);
         assert_eq!(trees.len(), 1);
         let ids = live(scan_all_skills(&[target(&tool, "claude-code", "Claude Code")]))
@@ -1035,6 +1071,7 @@ pub fn scan_all_skills(targets: &[ScanTarget]) -> Vec<Skill> {
     for i in 0..skills.len() {
         let mut earlier_real_rep: Option<usize> = None;
         let mut others: Vec<String> = Vec::new();
+        let mut other_tool_ids = std::collections::HashSet::new();
         let mut has_real_source = false; // 同组跨工具是否存在非 junction 真源
         for j in 0..skills.len() {
             if j == i || skills[j].folder_name != skills[i].folder_name {
@@ -1048,7 +1085,10 @@ pub fn scan_all_skills(targets: &[ScanTarget]) -> Vec<Skill> {
                 if !skills[j].hub_linked {
                     has_real_source = true;
                 }
-                others.push(skills[j].tool_id.clone());
+                // other_sources 表示「其他工具」，同一工具的多个扫描根/同名实例只计一次。
+                if other_tool_ids.insert(skills[j].tool_id.clone()) {
+                    others.push(skills[j].tool_id.clone());
+                }
             }
         }
         let rep = if skills[i].hub_linked {
@@ -1064,7 +1104,7 @@ pub fn scan_all_skills(targets: &[ScanTarget]) -> Vec<Skill> {
     // 加入已翻译但源文件已删除的孤儿记录
     for (sid, tmeta) in &translation_meta {
         if !seen_ids.contains(sid) {
-            // 内置内部技能的历史记录不进入孤儿列表（纯内部资源，PLAN-17）
+            // 内置内部技能的历史记录不进入孤儿列表（纯内部资源）
             if let Some(parent) = Path::new(&tmeta.source_path).parent() {
                 if crate::config::is_internal_skill_dir(parent) {
                     continue;
@@ -1384,7 +1424,7 @@ pub fn scan_tree_text(targets: &[ScanTarget]) -> String {
     out
 }
 
-/// 文件管理器浏览器（PLAN-19）单个扫描根的结构化树包装。
+/// 文件管理器浏览器：单个扫描根的结构化树包装。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LibraryTreeRoot {
     /// 扫描根显示名（工具 label）

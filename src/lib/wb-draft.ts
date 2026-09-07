@@ -1,5 +1,5 @@
 /**
- * PLAN-07 W1：工作台草稿 localStorage 兜底。
+ * W1：工作台草稿 localStorage 兜底。
  * dirty 期间每次变更同步写入（KB 级，无 debounce 窗口），
  * 防崩溃 / 误关 / tab 切换丢失；保存成功后清除。
  */
@@ -13,16 +13,16 @@ export interface WbDraft {
   desc: string;
   /**
    * 「我的描述」单一输入：skill 做什么——作为 description 的源。
-   * PLAN-11 阶段 0：删「何时用」字段，面板只留这一个描述输入；
+   * 阶段 0：删「何时用」字段，面板只留这一个描述输入；
    * 使用场景由 AI「优化描述」补进 description（能力 1）。
    */
   purpose: string;
-  /** PLAN-11：AI「优化描述」产出的触发关键词（可选落 frontmatter trigger_keywords）。 */
+  /** AI「优化描述」产出的触发关键词（可选落 frontmatter trigger_keywords）。 */
   triggerKeywords: string[];
   emoji: string;
   body: string;
   /**
-   * shark-skill-creator 规范层结构补全（PLAN-17）：
+   * shark-skill-creator 规范层结构补全：
    * 勾选的子目录在后端创建时预置引导 README，并在 SKILL.md 模板追加资源导航段。
    * 默认全选（references/scripts/assets），用户可在 CreatorSpecPanel 中调整。
    */

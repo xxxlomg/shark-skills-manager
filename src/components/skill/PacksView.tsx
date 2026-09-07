@@ -28,7 +28,7 @@ interface PacksViewProps {
   publishingId?: string | null;
 }
 
-/** Skill Packs 视图：卡片网格 / 列表行 双布局 + 导入 ghost 卡（PLAN-05 P1 真实数据）。 */
+/** Skill Packs 视图：卡片网格 / 列表行 双布局 + 导入 ghost 卡（P1 真实数据）。 */
 export function PacksView({
   packs,
   onCreatePack,

@@ -1,4 +1,4 @@
-//! 模块 C 创作后端（PLAN-06 §3.10/§3.13 C6）：
+//! 模块 C 创作后端：
 //! - `skill_write_file`：编辑器整文件写（rel_path 禁 `..`/绝对路径 + 归属检查）；
 //! - `skill_commit_draft`：AI 模式落盘入口（归属检查 + 写 SKILL.md/references + 诊断校验）；
 //! - 路径归属安全基线 `assert_path_owned_with_roots`：所有写入口必过，
@@ -68,7 +68,7 @@ pub(crate) fn assert_path_owned_with_roots(path: &Path, roots: &[PathBuf]) -> Re
     Err(format!("PATH_ESCAPE:{}", norm.display()))
 }
 
-/// rel_path 安全检查：禁 `..` 组件、禁绝对路径（C6 验收硬标准）。
+/// rel_path 安全检查：禁 `..` 组件、禁绝对路径（写入口的硬性约束）。
 fn assert_rel_safe(rel: &str) -> Result<(), String> {
     let p = Path::new(rel);
     if p.is_absolute() {
@@ -130,7 +130,7 @@ pub struct SkillDraft {
     pub scaffold_resources: Vec<String>,
 }
 
-/// AI 模式落盘入口（§3.11）。location = "authored" 或 tool_id（§3.9 双落点）。
+/// AI 模式落盘入口。location = "authored" 或 tool_id（双落点）。
 /// 写完跑诊断校验一并返回。
 #[tauri::command]
 pub fn skill_commit_draft(
@@ -177,7 +177,7 @@ pub fn skill_commit_draft(
     }))
 }
 
-/// §3.9 工具落点：第一个存在的展开路径；都不存在则创建 paths[0]。
+/// 工具落点：第一个存在的展开路径；都不存在则创建 paths[0]。
 fn resolve_tool_base(tool_id: &str) -> Result<PathBuf, String> {
     let cfg = crate::config::load_config();
     let tool = cfg
@@ -385,8 +385,7 @@ pub fn skill_creator_read(rel_path: String) -> Result<String, String> {
 }
 
 // ---------------------------------------------------------------------------
-// C8：openai.yaml emitter + 约束校验（PLAN-06 §3.12，官方 schema 锚点：
-// mock/skills/codex-skill-creator/references/openai_yaml.md）
+// C8：openai.yaml emitter + 约束校验（官方 schema 锚点：内置 codex-skill-creator 的 openai_yaml.md）
 // 六字段全在 interface: 下；字符串一律引号包裹、键不引号、2 空格缩进。
 // ---------------------------------------------------------------------------
 
@@ -408,7 +407,7 @@ fn yq(s: &str) -> String {
     )
 }
 
-/// 裸文件名归一为 `./assets/<file>`（§3.12 约束 4）。
+/// 裸文件名归一为 `./assets/<file>`（openai.yaml 约束 4）。
 fn normalize_asset(p: &str) -> String {
     let t = p.trim().replace('\\', "/");
     if t.starts_with("./") || t.starts_with('/') {
@@ -439,7 +438,7 @@ pub(crate) fn emit_openai_yaml(f: &OpenaiFields) -> String {
     out
 }
 
-/// §3.12 约束校验：返回 (severity, message) 列表。error 阻断写入。
+/// openai.yaml 约束校验：返回 (severity, message) 列表。error 阻断写入。
 fn check_openai_fields(f: &OpenaiFields, skill_dir: &Path) -> Vec<(&'static str, String)> {
     let mut issues: Vec<(&'static str, String)> = vec![];
     if !f.default_prompt.contains("$skill-name") {
@@ -598,7 +597,7 @@ pub fn claude_md_generate(skill_dir: String) -> Result<serde_json::Value, String
 }
 
 // ---------------------------------------------------------------------------
-// C6 单测：路径逃逸全拒（验收硬标准）
+// C6 单测：路径逃逸全拒（硬性约束）
 // ---------------------------------------------------------------------------
 #[cfg(test)]
 mod c6_tests {
@@ -768,9 +767,9 @@ mod c8_tests {
 }
 
 // ---------------------------------------------------------------------------
-// C10：结构化编辑——frontmatter 行级外科手术（PLAN-06 §3.14）
+// C10：结构化编辑——frontmatter 行级外科手术
 // 策略：不解析重序列化。行式扫描顶层 key，只动被编辑 key 的行范围；
-// 未知字段/注释/多行块字节级保留（验收硬标准）。零新依赖。
+// 未知字段/注释/多行块字节级保留（硬性约束）。零新依赖。
 // ---------------------------------------------------------------------------
 
 #[derive(serde::Deserialize)]
@@ -893,7 +892,7 @@ pub fn skill_rename(skill_dir: String, new_name: String) -> Result<serde_json::V
         let _ = std::fs::rename(&new_dir, &dir);
         return Err(e);
     }
-    // PLAN-13 §2.4：skill_id = `authored|rel_dir`（v0.2 稳定键），rename 改变 rel →
+    // skill_id = `authored|rel_dir`（稳定键），rename 改变 rel →
     // id 漂移。把标签挂载与用途速览从旧 id 迁到新 id。迁移失败不阻断 rename（仅日志）。
     let rel = |p: &PathBuf| {
         p.strip_prefix(crate::config::authored_dir())
@@ -948,7 +947,7 @@ pub(crate) fn rename_skill_core(
 }
 
 // ---------------------------------------------------------------------------
-// W4（PLAN-07 §5）：附带资源文件树 + 删除
+// W4：附带资源文件树 + 删除
 // ---------------------------------------------------------------------------
 
 #[derive(serde::Serialize, Debug)]
@@ -1038,7 +1037,7 @@ pub fn skill_delete_file(skill_dir: String, rel: String) -> Result<(), String> {
     delete_file_checked(Path::new(&skill_dir), &rel, &owned_roots())
 }
 
-/// PLAN-11 3.1：导入外部文件到 skill 目录（二进制安全 `fs::copy`）。
+/// 导入外部文件到 skill 目录（二进制安全 `fs::copy`）。
 /// 归属闸(skill_dir) + rel 安全闸(target_rel)；源文件由用户经 dialog 选定，须存在。
 /// 目标已存在 → 拒（EXISTS），避免静默覆盖用户附件。
 pub(crate) fn import_file_checked(
@@ -1082,7 +1081,7 @@ pub fn skill_import_file(
 }
 
 // ---------------------------------------------------------------------------
-// C10 单测：字节级保留（验收硬标准）
+// C10 单测：字节级保留（硬性约束）
 // ---------------------------------------------------------------------------
 #[cfg(test)]
 mod c10_tests {
@@ -1363,7 +1362,7 @@ mod w4_tests {
 }
 
 // ---------------------------------------------------------------------------
-// PLAN-11 3.1 单测：skill_import_file 二进制安全 + 安全闸 + EXISTS
+// skill_import_file 单测：二进制安全 + 安全闸 + EXISTS
 // ---------------------------------------------------------------------------
 #[cfg(test)]
 mod import_tests {

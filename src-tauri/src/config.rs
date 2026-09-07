@@ -1,4 +1,4 @@
-//! 配置管理（v0.2 数据模型，PLAN-06 §2.6 / B1）
+//! 配置管理（v0.2 数据模型）：
 //!
 //! 配置文件：<Roaming>\shark\shark-skills-manager\config.json
 //!
@@ -13,6 +13,7 @@
 //! 收到的 scan_paths 反向合并回 tools（apply_scan_paths_edit）；B5 前端改造后拆除桥接。
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use tauri::Manager;
 use std::io::Write;
@@ -39,7 +40,7 @@ pub fn debug_log(msg: &str) {
 }
 
 // ---------------------------------------------------------------------------
-// 数据目录（PLAN-04 §1：外部化、单一目录）
+// 数据目录（外部化、单一目录）
 // ---------------------------------------------------------------------------
 
 static DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
@@ -47,7 +48,7 @@ static RESOURCE_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 // 单测线程局部覆盖：cargo test 每个 #[test] 跑在独立线程，各自 set 到自己的
 // 临时目录，互不污染（此前用全局 OnceLock，并行测试共享一个槽位，谁先设谁赢，
-// 导致数据目录相关测试互相踩踏——PLAN-09 P10b 新增数据目录测试时实锤）。
+// 导致数据目录相关测试互相踩踏）。
 // 生产代码从不 set 这个线程局部值，get_data_dir() 照常回落 OnceLock。
 thread_local! {
     static TEST_DATA_DIR: RefCell<Option<PathBuf>> = RefCell::new(None);
@@ -86,6 +87,7 @@ pub fn init_data_dir(app: &tauri::AppHandle) {
         let _ = RESOURCE_DIR.set(rd);
     }
     migrate_legacy_data(&dir);
+    migrate_legacy_sessions(app, &dir);
     debug_log(&format!("data_dir initialized: {}", dir.display()));
 }
 
@@ -165,6 +167,139 @@ pub fn session_path(session_id: &str) -> PathBuf {
     sessions_dir().join(format!("{key}.jsonl"))
 }
 
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct SessionIndex {
+    /// 创作主体（draft/skill id）到事件日志 session id 的唯一映射。
+    #[serde(default)]
+    owners: HashMap<String, String>,
+}
+
+/// 会话索引与 JSONL 事件日志同目录，避免依赖 Tauri WebView 的 localStorage 数据目录。
+pub fn sessions_index_path() -> PathBuf {
+    sessions_dir().join("index.json")
+}
+
+fn load_session_index() -> SessionIndex {
+    let path = sessions_index_path();
+    let Ok(text) = fs::read_to_string(path) else {
+        return SessionIndex::default();
+    };
+    serde_json::from_str(&text).unwrap_or_default()
+}
+
+fn save_session_index(index: &SessionIndex) -> Result<(), String> {
+    let dir = sessions_dir();
+    fs::create_dir_all(&dir).map_err(|e| format!("会话目录创建失败: {e}"))?;
+    let text = serde_json::to_string_pretty(index).map_err(|e| format!("会话索引序列化失败: {e}"))?;
+    fs::write(sessions_index_path(), text).map_err(|e| format!("会话索引写入失败: {e}"))
+}
+
+/// 绑定创作主体与 session id。持久化位置固定为产品数据目录。
+pub fn bind_session(owner_id: &str, session_id: &str) -> Result<(), String> {
+    if owner_id.trim().is_empty() || session_id.trim().is_empty() {
+        return Err("会话绑定参数不能为空".to_string());
+    }
+    let mut index = load_session_index();
+    index
+        .owners
+        .insert(owner_id.to_string(), session_id.to_string());
+    save_session_index(&index)
+}
+
+/// 获取创作主体绑定的 session id；索引指向已不存在的日志时视为无绑定。
+pub fn lookup_session(owner_id: &str) -> Option<String> {
+    let index = load_session_index();
+    index
+        .owners
+        .get(owner_id)
+        .filter(|sid| session_path(sid).is_file())
+        .cloned()
+}
+
+/// 移除创作主体绑定。不存在视为成功，便于主动放弃创作的清理流程幂等执行。
+pub fn unbind_session(owner_id: &str) -> Result<(), String> {
+    let mut index = load_session_index();
+    if index.owners.remove(owner_id).is_some() {
+        save_session_index(&index)?;
+    }
+    Ok(())
+}
+
+/// 删除 session 日志时同步移除所有指向它的归属映射，防止索引长期积累失效条目。
+pub fn unbind_session_id(session_id: &str) -> Result<(), String> {
+    let mut index = load_session_index();
+    let before = index.owners.len();
+    index.owners.retain(|_, sid| sid != session_id);
+    if index.owners.len() != before {
+        save_session_index(&index)?;
+    }
+    Ok(())
+}
+
+/// 将旧版本直接使用 Tauri app_data_dir 的 session 文件复制到统一产品数据目录。
+/// 源目录只读保留，目标已有同名文件时不覆盖，避免升级过程破坏新会话。
+fn copy_legacy_session_files(source: &Path, target: &Path) -> usize {
+    let Ok(entries) = fs::read_dir(source) else {
+        return 0;
+    };
+    let mut copied = 0usize;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() || !path.extension().is_some_and(|e| e == "jsonl") {
+            continue;
+        }
+        let Some(name) = path.file_name() else {
+            continue;
+        };
+        let destination = target.join(name);
+        if !destination.exists()
+            && fs::create_dir_all(target).is_ok()
+            && fs::copy(&path, &destination).is_ok()
+        {
+            copied += 1;
+        }
+    }
+    copied
+}
+
+fn migrate_legacy_sessions(app: &tauri::AppHandle, target: &Path) {
+    let mut old_app_dirs = Vec::new();
+    if let Ok(old_app_dir) = app.path().app_data_dir() {
+        old_app_dirs.push(old_app_dir);
+    }
+    // identifier 曾随产品命名演进，兼容同一 Roaming 层下的旧 shark 应用目录。
+    for data_dir in [dirs::data_dir(), dirs::data_local_dir()].into_iter().flatten() {
+        if let Ok(entries) = fs::read_dir(&data_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let name = entry.file_name().to_string_lossy().to_lowercase();
+                if path.is_dir()
+                    && name.starts_with("com.")
+                    && name.contains("shark")
+                    && !old_app_dirs.iter().any(|existing| existing == &path)
+                {
+                    old_app_dirs.push(path);
+                }
+            }
+        }
+    }
+    if old_app_dirs.is_empty() {
+        return;
+    }
+    let target_sessions = target.join("sessions");
+    let mut copied = 0usize;
+    for old_app_dir in &old_app_dirs {
+        copied += copy_legacy_session_files(old_app_dir, &target_sessions);
+        copied += copy_legacy_session_files(&old_app_dir.join("sessions"), &target_sessions);
+    }
+    if copied > 0 {
+        debug_log(&format!(
+            "migrated legacy sessions: {copied} file(s) from {} candidate directory(ies)",
+            old_app_dirs.len()
+        ));
+    }
+}
+
 /// 单测专用：把当前测试线程的数据目录指到临时目录，避免触碰真实用户数据。
 /// 线程局部覆盖 → 并行测试各自隔离，不再共享全局竞态。
 #[cfg(test)]
@@ -172,8 +307,8 @@ pub fn set_data_dir_for_test(p: PathBuf) {
     TEST_DATA_DIR.with(|d| *d.borrow_mut() = Some(p));
 }
 
-/// 导入 skills 存放目录（PLAN-04 §3，Phase 1 接入扫描与 UI）
-/// PLAN-09 P5：若配置了自定义下载/导入目录则优先使用，否则沿用默认。
+/// 导入 skills 存放目录（Phase 1 接入扫描与 UI）
+/// 若配置了自定义下载/导入目录则优先使用，否则沿用默认。
 pub fn imported_dir() -> PathBuf {
     effective_import_path(&load_config())
 }
@@ -187,7 +322,7 @@ fn effective_import_path(cfg: &AppConfig) -> PathBuf {
     }
 }
 
-/// PLAN-09 P5：保存自定义下载/导入目录（空串/None = 恢复默认）
+/// 保存自定义下载/导入目录（空串/None = 恢复默认）
 pub fn set_download_dir(dir: Option<String>) -> Result<(), String> {
     let mut cfg = load_config();
     cfg.download_dir = dir
@@ -196,7 +331,7 @@ pub fn set_download_dir(dir: Option<String>) -> Result<(), String> {
     save_config(&cfg)
 }
 
-/// PLAN-12：持久化「AI 引导已永久关闭」标记（点过一次 AI 创作后不再弹提示）
+/// 持久化「AI 引导已永久关闭」标记（点过一次 AI 创作后不再弹提示）
 pub fn set_ai_hint_dismissed(v: bool) -> Result<(), String> {
     let mut cfg = load_config();
     if cfg.ai_hint_dismissed == v {
@@ -206,12 +341,12 @@ pub fn set_ai_hint_dismissed(v: bool) -> Result<(), String> {
     save_config(&cfg)
 }
 
-/// C5（PLAN-06 §3.13）：创作 skills 存放目录（skill_new 模板模式落点）
+/// C5：创作 skills 存放目录（skill_new 模板模式落点）
 pub fn authored_dir() -> PathBuf {
     get_data_dir().join("authored")
 }
 
-/// Skill Pack canonical 存储目录（PLAN-05 §2.4：packs/<id>/）
+/// Skill Pack canonical 存储目录（packs/<id>/）
 pub fn packs_dir() -> PathBuf {
     get_data_dir().join("packs")
 }
@@ -228,12 +363,12 @@ pub fn translations_json_path() -> PathBuf {
     get_data_dir().join("translations.json")
 }
 
-/// PLAN-13 工作流 T：标签数据（tags.json），与 config.json/translations.json 平级。
+/// 工作流 T：标签数据（tags.json），与 config.json/translations.json 平级。
 pub fn tags_json_path() -> PathBuf {
     get_data_dir().join("tags.json")
 }
 
-/// PLAN-13 工作流 S：技能用途速览（summaries.json）。
+/// 工作流 S：技能用途速览（summaries.json）。
 pub fn summaries_json_path() -> PathBuf {
     get_data_dir().join("summaries.json")
 }
@@ -292,7 +427,7 @@ fn default_reasoning_effort() -> String {
     "low".to_string()
 }
 
-/// v0.2 工具注册表条目（PLAN-06 §2.6）
+/// v0.2 工具注册表条目
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolEntry {
     /// 稳定 id：注册表工具（claude-code/codex/...）或 custom-<slug> / builtin / imported
@@ -319,7 +454,7 @@ pub struct ToolEntry {
 /// 应用自有来源 id（scanner/translations 依赖其 name 契约）
 pub const TOOL_ID_BUILTIN: &str = "builtin";
 pub const TOOL_ID_IMPORTED: &str = "imported";
-/// C5（PLAN-06 §3.13）：创作自有源——skill_new 模板模式的唯一落点
+/// C5：创作自有源——skill_new 模板模式的唯一落点
 pub const TOOL_ID_AUTHORED: &str = "authored";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -328,18 +463,18 @@ pub struct AppConfig {
     pub tools: Vec<ToolEntry>,
     #[serde(default = "default_llm")]
     pub llm: LLMConfig,
-    /// 模块 A 发布侧：「我的技能仓库」本地路径 + remote（PLAN-06 §1.3）
+    /// 模块 A 发布侧：「我的技能仓库」本地路径 + remote
     #[serde(default)]
     pub publish_repo: Option<PublishRepo>,
-    /// PLAN-09 P5：技能下载/导入目录（None = 沿用默认 %APPDATA%\shark\shark-skills-manager\imported）
+    /// 技能下载/导入目录（None = 沿用默认 %APPDATA%\shark\shark-skills-manager\imported）
     #[serde(default)]
     pub download_dir: Option<String>,
-    /// PLAN-12：创作台 AI 引导已永久关闭（点过一次 AI 创作后不再弹「没灵感」提示）
+    /// 创作台 AI 引导已永久关闭（点过一次 AI 创作后不再弹「没灵感」提示）
     #[serde(default)]
     pub ai_hint_dismissed: bool,
 }
 
-/// 发布用技能仓库配置（无敏感字段：凭据完全走用户 git 环境，§1.3）
+/// 发布用技能仓库配置（无敏感字段：凭据完全走用户 git 环境）
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PublishRepo {
     pub local_path: String,
@@ -356,10 +491,10 @@ struct RawConfig {
     llm: Option<LLMConfig>,
     #[serde(default)]
     publish_repo: Option<PublishRepo>,
-    /// PLAN-09 P5：自定义下载/导入目录（缺失 = 沿用默认）
+    /// 自定义下载/导入目录（缺失 = 沿用默认）
     #[serde(default)]
     download_dir: Option<String>,
-    /// PLAN-12：AI 引导永久关闭标记（缺失 = false）
+    /// AI 引导永久关闭标记（缺失 = false）
     #[serde(default)]
     ai_hint_dismissed: bool,
 }
@@ -375,7 +510,7 @@ fn default_llm() -> LLMConfig {
 }
 
 /// 内置但不对用户暴露的内部技能（纯内部资源，仅创作工作台隐式调用）。
-/// 这些目录位于内置 skills/ 下，不注册为可见技能（扫描排除，PLAN-17）。
+/// 这些目录位于内置 skills/ 下，不注册为可见技能（扫描排除）。
 pub const INTERNAL_SKILL_DIRS: [&str; 1] = ["shark-skill-creator"];
 
 /// 判断路径是否为内置内部技能目录：
@@ -416,7 +551,7 @@ pub(crate) fn builtin_skills_dir() -> PathBuf {
     }
 }
 
-/// v0.2 内置工具注册表（PLAN-06 §2.2 逐家核实过的真实目录）。
+/// v0.2 内置工具注册表（逐家核实过的真实目录）。
 /// 注册表是静态数据：目录出现即被扫描（v0.1 是首装探测后冻结，此为有意升级）。
 struct RegistryTool {
     id: &'static str,
@@ -601,7 +736,7 @@ fn ensure_app_owned_entries(tools: &mut Vec<ToolEntry>) {
 }
 
 // ---------------------------------------------------------------------------
-// v0.2（B5 收尾）工具 CRUD：自定义工具增删改（PLAN-06 §2.6）
+// v0.2（B5 收尾）工具 CRUD：自定义工具增删改
 // 链接检查（删除前名下台账）在 commands 层做——config 不依赖 hub。
 // ---------------------------------------------------------------------------
 
@@ -725,7 +860,7 @@ pub fn remove_tool(tools: &mut Vec<ToolEntry>, id: &str) -> Result<ToolEntry, St
     Ok(tools.remove(pos))
 }
 
-/// 启动即清私有暂存区（PLAN-06 §7.2：tmp/ 不放任何持久数据）
+/// 启动即清私有暂存区（tmp/ 不放任何持久数据）
 pub fn cleanup_tmp_dir() {
     let dir = get_data_dir().join("tmp");
     if dir.is_dir() {
@@ -769,6 +904,12 @@ pub fn cleanup_stale_sessions(ttl_days: u64) {
         }
     }
     if removed > 0 {
+        let mut index = load_session_index();
+        let before = index.owners.len();
+        index.owners.retain(|_, sid| session_path(sid).is_file());
+        if index.owners.len() != before {
+            let _ = save_session_index(&index);
+        }
         debug_log(&format!("startup: 清理过期会话 {removed} 个（>{ttl_days} 天）"));
     }
 }
@@ -851,7 +992,7 @@ fn short_hash(s: &str) -> String {
 
 /// 扫描目标（B4 起 scanner 的输入）：enabled 工具 → 实际要扫的目录。
 /// app_owned 动态解析；外部工具展开候选后取存在者（与 v0.1「存在的配置
-/// 路径全扫」行为一致）。携带 tool_id 供 scanner 做稳定 rekey（§2.4）。
+/// 路径全扫」行为一致）。携带 tool_id 供 scanner 做稳定 rekey。
 #[derive(Debug, Clone, Serialize)]
 pub struct ScanTarget {
     pub path: String,
@@ -887,7 +1028,7 @@ pub fn scan_targets_from_tools(tools: &[ToolEntry]) -> Vec<ScanTarget> {
 
 // v0.2（B5 收尾）：scan_paths 前端桥接（config_view_from_tools /
 // apply_scan_paths_edit / detect_unconfigured_paths）已按计划拆除——
-// 设置页改走 hub_list_tools + 工具 CRUD 命令（PLAN-06 §2.6/§2.10）。
+// 设置页改走 hub_list_tools + 工具 CRUD 命令。
 // config.json 的旧 scan_paths 字段仍由 RawConfig 读兼容（迁移后写时丢弃）。
 
 // ---------------------------------------------------------------------------
@@ -941,7 +1082,7 @@ pub fn load_config() -> AppConfig {
     cfg
 }
 
-/// 确保「导入」源在 tools 中且启用（首次导入时调，PLAN-04 §3.1）
+/// 确保「导入」源在 tools 中且启用（首次导入时调）
 pub fn ensure_imported_scan_path() {
     let mut cfg = load_config();
     match cfg.tools.iter_mut().find(|t| t.id == TOOL_ID_IMPORTED) {
@@ -1007,9 +1148,9 @@ pub struct MaskedConfig {
     pub _has_key: bool,
     /// 发布仓库配置（路径+URL，无敏感内容，原样返回）
     pub publish_repo: Option<PublishRepo>,
-    /// PLAN-09 P5：当前生效的下载/导入目录
+    /// 当前生效的下载/导入目录
     pub download_dir: String,
-    /// PLAN-12：AI 引导是否已永久关闭
+    /// AI 引导是否已永久关闭
     pub ai_hint_dismissed: bool,
 }
 
@@ -1051,7 +1192,7 @@ pub fn load_masked_config() -> MaskedConfig {
 }
 
 // ---------------------------------------------------------------------------
-// 测试（B1 验收：迁移不丢自定义路径 / $VAR~ 展开 / 注册表全量识别 / 幂等）
+// 测试（迁移不丢自定义路径 / $VAR~ 展开 / 注册表全量识别 / 幂等）
 // 仅测纯函数；load_config/save_config 触碰真实数据目录，不在单测覆盖内。
 // ---------------------------------------------------------------------------
 
@@ -1111,6 +1252,18 @@ mod tests {
         assert_eq!(events[0]["content"], serde_json::json!("msg-0"));
         assert_eq!(events[2]["content"], serde_json::json!("msg-2"));
 
+        // 归属映射与事件日志位于同一个产品数据目录，而不是 WebView localStorage。
+        bind_session("draft-1", sid).unwrap();
+        assert_eq!(lookup_session("draft-1"), Some(sid.to_string()));
+        assert_eq!(sessions_index_path(), dir.join("sessions/index.json"));
+        unbind_session("draft-1").unwrap();
+        assert_eq!(lookup_session("draft-1"), None);
+
+        // 删除日志时，后端也清理反向索引，避免下次打开命中失效 session。
+        bind_session("draft-2", sid).unwrap();
+        crate::commands::session_delete(sid.to_string()).unwrap();
+        assert_eq!(lookup_session("draft-2"), None);
+
         // 不存在的会话 → SESSION_NOT_FOUND（前端降级为空会话）
         assert!(crate::commands::session_load("nope".to_string()).is_err());
 
@@ -1120,6 +1273,23 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&dir);
         set_data_dir_for_test(prev);
+    }
+
+    #[test]
+    fn legacy_session_files_are_copied_without_overwriting_new_data() {
+        let root = tempfile::tempdir().unwrap();
+        let old = root.path().join("old");
+        let target = root.path().join("new/sessions");
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::write(old.join("legacy.jsonl"), "legacy\n").unwrap();
+        std::fs::write(old.join("ignore.txt"), "ignore\n").unwrap();
+
+        assert_eq!(copy_legacy_session_files(&old, &target), 1);
+        assert_eq!(std::fs::read_to_string(target.join("legacy.jsonl")).unwrap(), "legacy\n");
+
+        std::fs::write(target.join("legacy.jsonl"), "new\n").unwrap();
+        assert_eq!(copy_legacy_session_files(&old, &target), 0);
+        assert_eq!(std::fs::read_to_string(target.join("legacy.jsonl")).unwrap(), "new\n");
     }
 
     #[test]
@@ -1271,7 +1441,7 @@ mod tests {
         assert_eq!(tools[0].id, "builtin", "builtin 恒在首位（扫描顺序锚点，B4 代表选取依赖）");
     }
 
-    // ---- 工具 CRUD（B5 收尾，PLAN-06 §2.6）----
+    // ---- 工具 CRUD（B5 收尾）----
 
     #[test]
     fn add_tool_creates_linkable_custom_entry() {

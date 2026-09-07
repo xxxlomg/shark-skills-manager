@@ -1,7 +1,7 @@
 import { Boxes, Link2, Package, PenLine, type LucideIcon } from "lucide-react";
 
 /**
- * 视图注册表（PLAN-06 §7.6 导航结构插槽）
+ * 视图注册表（导航结构插槽）
  *
  * 约束（修订 R2-c）：
  * - 导航项一律数据驱动：id + 标题 + 图标 + 排序权重，不硬编码 Tab 数量与顺序；
@@ -11,7 +11,7 @@ import { Boxes, Link2, Package, PenLine, type LucideIcon } from "lucide-react";
  * 渲染分发在 App.tsx 的 composition root（按 id 查 RENDERERS 表），
  * 入口位置（Tab / 顶栏按钮 / 详情页内）对视图实现透明。
  *
- * PLAN-10 P1：使用手册移出 Tab，改为右上角「关于」菜单入口的白皮书全屏页。
+ * P1：使用手册移出 Tab，改为右上角「关于」菜单入口的白皮书全屏页。
  */
 
 export type ViewId = "lib" | "packs" | "create" | "hub";

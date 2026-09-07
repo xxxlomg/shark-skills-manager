@@ -54,12 +54,6 @@ export function SkillRow({ skill, onClick }: SkillRowProps) {
         {skill.description_zh || skill.description || "无描述"}
       </span>
 
-      {skill.scan_label && (
-        <Badge variant="secondary" className="tag-purple shrink-0">
-          {skill.scan_label}
-        </Badge>
-      )}
-
       {skill.parent_collection && (
         <Tooltip>
           <TooltipTrigger asChild>

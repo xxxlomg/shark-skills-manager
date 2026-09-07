@@ -35,7 +35,7 @@ const primaryBtn =
 /** 技能名 tag 上限：超出折叠为 +N */
 const MAX_TAGS = 3;
 
-/** Skill Pack 卡片：版本徽章、技能名标签、概述与操作按钮（PLAN-05 P1）。 */
+/** Skill Pack 卡片：版本徽章、技能名标签、概述与操作按钮（P1）。 */
 export function PackCard({ pack, index, onAction, publishDisabledReason, publishing }: PackCardProps) {
   const shown = pack.skill_names.slice(0, MAX_TAGS);
   const rest = pack.skill_names.length - shown.length;

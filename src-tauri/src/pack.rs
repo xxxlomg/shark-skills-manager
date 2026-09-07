@@ -1,10 +1,10 @@
-//! Skill Pack — 平台原生打包格式（PLAN-05 P1）。
+//! Skill Pack — 平台原生打包格式（P1）。
 //!
 //! 格式：.skillpack = zip，内含 pack.json（机器层唯一事实源）+ README.md
 //! （人类层）+ skills/<name>/（原样 skill 文件夹）+ 可选 i18n/ sidecar（P2）。
 //! 所有函数接受显式 base 路径，便于测试注入；命令层传 config::packs_dir()。
 //!
-//! 打包前强制校验（PLAN-06 §3.7，C4）：create_pack 对每个入选技能目录跑
+//! 打包前强制校验（C4）：create_pack 对每个入选技能目录跑
 //! 严格模式校验；任一技能有 Error 且 force=false → 拒绝打包并返回结构化清单
 //! （PackCreateError::ValidationFailed）；force=true 放行，所有 Warn/Error
 //! 摘要写入 pack.json 的 validation_warnings（旧包无此字段 → serde default）。
@@ -20,7 +20,7 @@ use crate::import;
 use crate::translations;
 
 pub const FORMAT_VERSION: u32 = 1;
-/// 单次打包技能数上限（与 PLAN-05 §2.3 AI 输入预算对齐）
+/// 单次打包技能数上限（与 AI 输入预算对齐）
 const MAX_SKILLS_PER_PACK: usize = 40;
 /// 静态总结里单条 description 截断长度
 const DESC_TRUNC: usize = 300;
@@ -68,7 +68,7 @@ pub struct PackManifest {
     #[serde(default)]
     pub i18n: Vec<String>,
     pub skills: Vec<PackSkillEntry>,
-    /// C4（PLAN-06 §3.7）：打包时严格校验的 Warn/Error 摘要，形如
+    /// C4：打包时严格校验的 Warn/Error 摘要，形如
     /// `[skills/<folder>] <RULE_ID> (<error|warn>): <message>`。
     /// force 逃生门放行（或仅 Warn 不阻断）时留痕，下游可见"带伤发布"。
     /// 旧包（v0.1 等）无此字段 → serde default 空；全绿包序列化时省略
@@ -137,7 +137,7 @@ pub struct PackDetect {
 }
 
 // ---------------------------------------------------------------------------
-// C4：打包前校验的错误结构（PLAN-06 §3.7）
+// C4：打包前校验的错误结构
 // ---------------------------------------------------------------------------
 
 /// 单个技能严格校验失败条目。前端按清单渲染（弹窗列出问题 → 修复或 force）。
@@ -360,7 +360,7 @@ fn render_readme(m: &PackManifest) -> String {
 
 /// 创建 canonical pack：packs/<id>/（temp 写入后 rename，防半写）。
 ///
-/// C4（§3.7）：打包前对每个入选技能目录跑严格校验。任一技能存在 Error 级
+/// C4：打包前对每个入选技能目录跑严格校验。任一技能存在 Error 级
 /// issue 且 force=false → 返回 `PackCreateError::ValidationFailed`（结构化
 /// 清单，拒绝时零落盘副作用）；force=true 放行。校验产出的全部 Warn/Error
 /// 摘要写入 manifest.validation_warnings（Warn 永不阻断）。校验自身不可用
@@ -422,7 +422,7 @@ pub fn create_pack(
         placed.push((target, dir, s));
     }
 
-    // C4 校验门（§3.7）：早于一切落盘，拒绝路径零副作用。
+    // C4 校验门：早于一切落盘，拒绝路径零副作用。
     // warnings 无论是否 force 都记录（"带伤发布"留痕，下游导入方可见）；
     // force 仅决定是否放行 Error。
     let (failed, validation_warnings) = validate_selected(&placed);
@@ -540,7 +540,7 @@ pub fn create_pack(
     Ok(to_info(&manifest))
 }
 
-/// C4：对入选技能目录逐一跑严格模式校验（§3.7 打包前强制校验）。
+/// C4：对入选技能目录逐一跑严格模式校验（打包前强制校验）。
 /// 返回 (失败清单, Warn/Error 摘要行)。摘要行格式：
 /// `[skills/<folder>] <RULE_ID> (<error|warn>): <message>`，folder 用包内
 /// 最终目录名（含改名后的 -2 等），保证与包内路径一致。
@@ -557,7 +557,7 @@ fn validate_selected(
             let sev = match issue.severity {
                 Severity::Error => "error",
                 Severity::Warn => "warn",
-                Severity::Info => continue, // §3.7：仅 Warn/Error 入摘要
+                Severity::Info => continue, // 仅 Warn/Error 入摘要
             };
             warnings.push(format!(
                 "[skills/{}] {} ({}): {}",
@@ -1300,7 +1300,7 @@ mod tests {
         assert!(pack_base.join("dup/skills/tool-2/SKILL.md").is_file());
     }
 
-    // ==== C4：pack_create 校验集成 + force 逃生门（PLAN-06 §3.7/§3.8）====
+    // ==== C4：pack_create 校验集成 + force 逃生门 ====
 
     /// 构造触发 FM-04（hyphen-case）严格 Error 的技能。
     /// 目录名与 name 一致，避免 CL-01 噪声，保证单 issue 可断言
@@ -1403,7 +1403,7 @@ mod tests {
             &[input(&dir, "other-name", "d")],
             false,
         )
-        .expect("Warn 永不阻断（§3.7）");
+        .expect("Warn 永不阻断");
         let m = read_manifest(&pack_base.join(&info.id)).unwrap();
         assert!(
             m.validation_warnings.iter().any(|w| w.contains("CL-01") && w.contains("(warn)")),

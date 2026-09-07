@@ -1,11 +1,11 @@
 /**
- * PLAN-16 阶段 2-4：统一合并工作台（总览着陆 + 变体流水线 + SaveDialog）。
+ * 阶段 2-4：统一合并工作台（总览着陆 + 变体流水线 + SaveDialog）。
  *
  * 心智（D4）：选基底 + 折入其余 —— variants = buildVariants(group)，
  * V==1 无流水线（直接处置副本）、V==2 一步三向、V>2 流水线，同一组件吃 variants。
  * 小白：进入 → 「全部采纳默认」→ 保存；专家：逐条决策 / 切基准 / 展开三向详情。
  *
- * 关键修复（PLAN-16 P4/P5/P7）：
+ * 关键修复（P4/P5/P7）：
  *  - P4：决策计数 = confirmed 真实计数（附件确认后减少）；
  *  - P5：附件 chip 单实例（按 rel 去重、唯一 key），冲突数徽标「K 版本不同」；
  *  - P7：字母体系 = variants 字母，全链路一贯（基准恒为 A，其余按流水线序 B…）。
@@ -537,7 +537,7 @@ export function MultiMergeWorkbench({ group, baseId, onBack, onResolved }: Multi
     dragRef.current = null;
   };
 
-  // ---- 基准切换（D3：有已确认决策才需确认；否则直接切，避免 V1 全等时弹无意义确认）----
+  // ---- 基准切换（有已确认决策才需确认；否则直接切，避免 V1 全等时弹无意义确认）----
   const requestBaseSwitch = (letter: string) => {
     if (letter === baseLetter) return;
     const decided =
@@ -1348,7 +1348,7 @@ export function MultiMergeWorkbench({ group, baseId, onBack, onResolved }: Multi
         </div>
       </footer>
 
-      {/* ===== 基准切换确认（D3）===== */}
+      {/* ===== 基准切换确认 ===== */}
       <ConfirmDialog
         open={confirmBase !== null}
         onOpenChange={(o) => !o && setConfirmBase(null)}

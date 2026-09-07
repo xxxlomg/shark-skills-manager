@@ -1,7 +1,7 @@
 /**
- * PLAN-13 阶段 3：智能合并 —— 段落级拼接引擎（纯前端，交互式冲突解决）。
+ * 阶段 3：智能合并 —— 段落级拼接引擎（纯前端，交互式冲突解决）。
  *
- * 契约（§4.4 Step 2/3/4）：
+ * 契约（Step 2/3/4）：
  *  - Step 2 frontmatter 合并：纯规则（取更长/并集去重），无 LLM；
  *  - Step 3 正文按 Markdown 标题切块 → 归一化对齐 → 配对块取更长（冲突可切 a/b/both）、
  *    独有块按序保留、B 独有块追加到同层末尾、头部块取更长；
@@ -155,7 +155,7 @@ export interface MergedDraft {
 }
 
 // ---------------------------------------------------------------------------
-// 三向合并视图（PLAN-15 §3.1）：暴露 A/B 对齐关系，供三列工作台渲染。
+// 三向合并视图：暴露 A/B 对齐关系，供三列工作台渲染。
 // ---------------------------------------------------------------------------
 
 /** 三向合并的单个对齐单元（段落块）。 */
@@ -240,7 +240,7 @@ interface ComputeMerge {
 /**
  * 段落级拼接核心（mergeBodies 与 buildThreeWayView 共用同一份对齐结果，
  * 从根上保证两条渲染路径一致，不会漂移）。
- * - alignThreshold：块对齐的 token 重叠阈值（默认 0.6，§4.4 Step 3.2）。
+ * - alignThreshold：块对齐的 token 重叠阈值（默认 0.6，Step 3.2）。
  */
 function computeMerge(bodyA: string, bodyB: string, alignThreshold: number): ComputeMerge {
   const aAll = splitBlocks(bodyA);
@@ -355,7 +355,7 @@ function computeMerge(bodyA: string, bodyB: string, alignThreshold: number): Com
 
 /**
  * 段落级拼接主入口（对外行为不变）。
- * - alignThreshold：块对齐的 token 重叠阈值（默认 0.6，§4.4 Step 3.2）。
+ * - alignThreshold：块对齐的 token 重叠阈值（默认 0.6，Step 3.2）。
  */
 export function mergeBodies(bodyA: string, bodyB: string, alignThreshold = 0.6): MergedDraft {
   const r = computeMerge(bodyA, bodyB, alignThreshold);
@@ -363,7 +363,7 @@ export function mergeBodies(bodyA: string, bodyB: string, alignThreshold = 0.6):
 }
 
 /**
- * 三向合并视图（PLAN-15 D2/D4 核心）：A 来源 | 中立结果 | B 来源。
+ * 三向合并视图（D2/D4 核心）：A 来源 | 中立结果 | B 来源。
  * 与 mergeBodies 共用 computeMerge，rows 按默认 choice 渲染的正文
  * 恒等于 mergeBodies().text（一致性铁律，单测锁定）。
  */

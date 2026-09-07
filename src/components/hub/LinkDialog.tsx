@@ -79,7 +79,7 @@ function StepHeader({ n, title, hint }: { n: number; title: string; hint?: strin
 }
 
 /**
- * 新建引用对话框（PLAN-06 §2.8，B5）。
+ * 新建引用对话框（B5）。
  * 居中 Dialog：左 sidebar 选技能，右侧选目标工具与方式。
  * 集合根技能可勾选「引用整个合集」；builtin 技能禁止 move。
  */

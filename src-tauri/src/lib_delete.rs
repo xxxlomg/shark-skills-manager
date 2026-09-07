@@ -1,4 +1,4 @@
-//! PLAN-18：技能库批量删除（回收站语义 + Hub 引用保护）。
+//! 技能库批量删除（回收站语义 + Hub 引用保护）。
 //!
 //! 两条命令：
 //! - `skill_batch_delete_check`：纯读预检，返回每个技能在 Hub 账本中的引用分类，
@@ -8,7 +8,7 @@
 //!      merge-backups 后移入系统回收站（绝不物理删除），并清标签挂载；
 //!   2. 存在引用 → 只执行解除引用（hub::unlink_skill），不物理删除、不进回收站。
 //!      解除后技能本体仍在库中，用户再次勾选删除才会进回收站（二段式删除）。
-//! 单删不写 merge-history（无 keep 侧，PLAN-18 已确认）；恢复依赖系统回收站 + 备份双通道。
+//! 单删不写 merge-history（无 keep 侧）；恢复依赖系统回收站 + 备份双通道。
 
 use serde::Serialize;
 use std::path::{Path, PathBuf};

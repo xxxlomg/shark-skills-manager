@@ -1,11 +1,11 @@
 /**
- * PLAN-13 工作流 M 阶段 2：对比/合并工作台（手动路径，全屏沉浸态）。
+ * 工作流 M 阶段 2：对比/合并工作台（手动路径，全屏沉浸态）。
  *
- * 布局（§4.3）：顶栏（返回 / A↔B / 类型徽标+理由）→ git 式按行 diff →
+ * 布局：顶栏（返回 / A↔B / 类型徽标+理由）→ git 式按行 diff →
  * 附件对比条（同名/仅A/仅B，同名可点开单文件 diff）→ 底部「保存左边/保存右边」。
  *
  * 阶段 2 语义：「保存某边」= 保留该技能，另一份**备份后进回收站**；
- * junction 落点 / 账本出处由后端地雷排查拦截（§4.5），前端同步禁用。
+ * junction 落点 / 账本出处由后端地雷排查拦截，前端同步禁用。
  * 智能合并（段落拼接/AI 润色/落点选择）属阶段 3，本阶段不出现。
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -40,7 +40,7 @@ interface MergeWorkbenchProps {
   onBack: () => void;
   /** 处置成功：App 刷新技能列表并收尾 */
   onResolved: () => void;
-  /** PLAN-16 阶段 5：点「智能合并」→ 打开统一合并工作台（V==2 分支） */
+  /** 阶段 5：点「智能合并」→ 打开统一合并工作台（V==2 分支） */
   onMerge: (group: DupGroup, baseId: string) => void;
 }
 
@@ -254,7 +254,7 @@ export function MergeWorkbench({ a, b, group, onBack, onResolved, onMerge }: Mer
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {/* ===== header：顶栏 / 路径 / 地雷警告（PLAN-15 §2 骨架）===== */}
+      {/* ===== header：顶栏 / 路径 / 地雷警告（工作台壳骨架）===== */}
       <header className="shrink-0 pt-4">
       <div className="flex items-center gap-3">
         <button
@@ -302,7 +302,7 @@ export function MergeWorkbench({ a, b, group, onBack, onResolved, onMerge }: Mer
         </span>
       </div>
 
-      {/* ===== 地雷警告条（§4.5）：junction 落点不可被处置（PLAN-15 §7：3px 左色条）===== */}
+      {/* ===== 地雷警告条：junction 落点不可被处置（3px 左色条）===== */}
       {(a.hub_linked || b.hub_linked) && (
         <div className="mt-3 flex items-start gap-2 border-l-[3px] border-amber-500 bg-amber-500/[.06] px-3 py-2 text-[12px] leading-relaxed text-amber-700">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -447,7 +447,7 @@ export function MergeWorkbench({ a, b, group, onBack, onResolved, onMerge }: Mer
         )}
       </main>
 
-      {/* ===== footer：保存左边 / 保存右边 / 智能合并入口（常驻可见，PLAN-15 §2） ===== */}
+      {/* ===== footer：保存左边 / 保存右边 / 智能合并入口（常驻可见，工作台壳） ===== */}
       <footer className="shrink-0 border-t border-stroke/70 py-3">
         <div className="flex items-center justify-end gap-2">
         <span className="mr-auto text-[11px] text-text-tertiary">

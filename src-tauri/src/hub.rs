@@ -1,9 +1,9 @@
-//! Hub 引用层（PLAN-06 §2.7 / 模块 B）
+//! Hub 引用层（模块 B）
 //!
 //! 只做磁盘操作 + 账本，不做 UI、不做业务决策。命令包装在 commands（B5）。
 //!
 //! 安全不变量：
-//! 1. 引用落点只能是注册表中 linkable 工具的 skills 目录（§2.6 解析序：
+//! 1. 引用落点只能是注册表中 linkable 工具的 skills 目录（解析序：
 //!    第一个存在的候选；都不存在则第一个可展开者，按需创建）——永不接受任意目标路径；
 //! 2. unlink 只移除 junction 本身（reparse point），永不触碰指向内容；
 //!    删除前验证磁盘形态仍是 junction，被替换为真实目录则拒绝；
@@ -27,7 +27,7 @@ use crate::config::{self, ToolEntry};
 pub enum LinkMode {
     Link,
     Copy,
-    /// 移动 = 复制 + 原件进回收站；账本按 Copy 记录（§2.7：移动完成后账本是干净的）
+    /// 移动 = 复制 + 原件进回收站；账本按 Copy 记录（移动完成后账本是干净的）
     Move,
 }
 
@@ -43,7 +43,7 @@ pub enum LedgerMode {
 pub struct HubLink {
     pub id: String,
     pub skill_name: String,
-    /// PLAN-13 工作流 H：用户自定义显示名（仅 UI 展示层，绝不改 junction 文件夹名）。
+    /// 工作流 H：用户自定义显示名（仅 UI 展示层，绝不改 junction 文件夹名）。
     /// 空串 = 未设置，UI 回落 title_zh → skill_name。旧账本无此字段时 serde 补默认。
     #[serde(default)]
     pub display_name: String,
@@ -143,7 +143,7 @@ fn gen_link_id(source: &Path, target: &Path) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// 目标解析（§2.6：第一个存在的候选；都不存在则第一个可展开者）
+// 目标解析（第一个存在的候选；都不存在则第一个可展开者）
 // ---------------------------------------------------------------------------
 
 /// 解析引用落点：linkable 注册表工具的 skills 目录。
@@ -171,7 +171,7 @@ pub fn resolve_target_root(tools: &[ToolEntry], tool_id: &str) -> Result<PathBuf
 }
 
 // ---------------------------------------------------------------------------
-// PLAN-13 工作流 H：显示名（仅账本字段，不触碰 target 目录）
+// 工作流 H：显示名（仅账本字段，不触碰 target 目录）
 // ---------------------------------------------------------------------------
 
 /// 设置 Hub 引用的用户自定义显示名（中文别名）。
@@ -219,7 +219,7 @@ pub fn link_skill_to_dir(
     mode: LinkMode,
 ) -> Result<HubLink, String> {
     // 源校验：目录 + （单技能 含 SKILL.md ｜ 集合 递归含 ≥1 个 SKILL.md）。
-    // §2.8：source 可为单技能目录或整集合目录；枢纽只处理合法 skill 生态内容。
+    // source 可为单技能目录或整集合目录；枢纽只处理合法 skill 生态内容。
     if !source.is_dir() {
         return Err(format!("源不是目录: {}", source.display()));
     }
@@ -292,7 +292,7 @@ pub fn link_skill_to_dir(
                 let _ = fs::remove_dir_all(&dest);
                 return Err(format!("原件移入回收站失败，已回滚副本: {}", e));
             }
-            LedgerMode::Copy // §2.7：Move 落账本为 copy（原件已走，无引用关系）
+            LedgerMode::Copy // Move 落账本为 copy（原件已走，无引用关系）
         }
     };
 
@@ -319,7 +319,7 @@ pub fn link_skill_to_dir(
     Ok(link)
 }
 
-/// 解除引用（§2.7）：link → 移除 junction（只删 reparse point）；copy → 不动磁盘。
+/// 解除引用：link → 移除 junction（只删 reparse point）；copy → 不动磁盘。
 /// 安全闸门：目标存在但不是 junction（被用户换成真实目录）→ 拒绝，防误删数据。
 pub fn unlink_skill(base: &Path, link_id: &str) -> Result<HubLink, String> {
     let mut ledger = load_ledger(base);
@@ -354,7 +354,7 @@ pub fn unlink_skill(base: &Path, link_id: &str) -> Result<HubLink, String> {
     Ok(link)
 }
 
-/// link → copy 转换（删原件前救命通道，§2.7）：复制实体替换 junction。
+/// link → copy 转换（删原件前救命通道）：复制实体替换 junction。
 pub fn convert_to_copy(base: &Path, link_id: &str) -> Result<HubLink, String> {
     let mut ledger = load_ledger(base);
     let idx = ledger
@@ -511,7 +511,7 @@ pub fn links_status(base: &Path) -> Vec<LinkStatus> {
     ledger.links.iter().map(diagnose_link).collect()
 }
 
-/// 删除某工具名下全部账本条目（删除自定义工具时 force 联动，§2.6）。
+/// 删除某工具名下全部账本条目（删除自定义工具时 force 联动）。
 /// 只动账本、不碰磁盘落点：用户已在删除确认中知晓落点失去纳管。
 pub fn drop_links_for_tool(base: &Path, tool_id: &str) -> Result<usize, String> {
     let mut ledger = load_ledger(base);
@@ -623,7 +623,7 @@ mod tests {
         let _ = fs::remove_dir_all(p);
     }
 
-    // ---- PLAN-13 工作流 H：显示名 ----
+    // ---- 工作流 H：显示名 ----
 
     #[test]
     fn set_display_name_updates_ledger_only() {

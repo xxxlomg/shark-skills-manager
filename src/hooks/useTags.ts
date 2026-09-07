@@ -1,5 +1,5 @@
 /**
- * PLAN-13 工作流 T：标签状态 Hook。
+ * 工作流 T：标签状态 Hook。
  * 数据层 tags.json 全量持有于前端（改完整存），多视图共享需提升到 App。
  * 乐观更新 + 失败回滚重读，杜绝 UI 与磁盘不一致残留。
  */
@@ -23,9 +23,9 @@ export interface UseTagsApi {
   tagsFor: (objectKey: string) => string[];
   /** 挂/摘标签（toggle） */
   toggleTag: (objectKey: string, tagId: string) => Promise<void>;
-  /** PLAN-14：批量添加标签（并集，幂等）——对多个对象一次 commit 落盘 */
+  /** 批量添加标签（并集，幂等）——对多个对象一次 commit 落盘 */
   batchAddTags: (objectKeys: string[], tagIds: string[]) => Promise<void>;
-  /** PLAN-14：批量清除标签（摘除，无则忽略）——对多个对象一次 commit 落盘 */
+  /** 批量清除标签（摘除，无则忽略）——对多个对象一次 commit 落盘 */
   batchRemoveTags: (objectKeys: string[], tagIds: string[]) => Promise<void>;
   /** 创建自定义标签；重名返回已存在的 id（不重复创建） */
   createTag: (name: string) => Promise<string>;

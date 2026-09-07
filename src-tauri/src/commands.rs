@@ -97,7 +97,7 @@ fn library_tree_cache_key(targets: &[config::ScanTarget]) -> String {
     parts.join("\n")
 }
 
-/// 技能库文件管理器树（PLAN-19）：每个启用扫描根一棵结构化目录树，
+/// 技能库文件管理器树：每个启用扫描根一棵结构化目录树，
 /// 供 LibraryExplorer 以「文件管理器」方式逐层渲染（目录/技能/资源）。
 /// 带进程内缓存：目标集合不变时直接复用，避免反复遍历磁盘 + 读 SKILL.md。
 #[tauri::command]
@@ -172,7 +172,31 @@ pub fn session_append(session_id: String, event: serde_json::Value) -> Result<()
             let _ = std::fs::write(&path, keep + "\n");
         }
     }
+    // 事件日志是会话归属的最终兜底：即使前端绑定调用失败，首次事件仍能建立产品目录内的映射。
+    if event.get("kind").and_then(|v| v.as_str()) == Some("session_created") {
+        if let Some(owner_id) = event.get("content").and_then(|v| v.as_str()) {
+            let _ = config::bind_session(owner_id, &session_id);
+        }
+    }
     Ok(())
+}
+
+/// 将创作主体绑定到产品数据目录内的 session 索引。
+#[tauri::command]
+pub fn session_bind(owner_id: String, session_id: String) -> Result<(), String> {
+    config::bind_session(&owner_id, &session_id)
+}
+
+/// 读取创作主体对应的 session id；无绑定或日志已不存在时返回 null。
+#[tauri::command]
+pub fn session_lookup(owner_id: String) -> Option<String> {
+    config::lookup_session(&owner_id)
+}
+
+/// 删除创作主体对应的 session 绑定（幂等）。
+#[tauri::command]
+pub fn session_unbind(owner_id: String) -> Result<(), String> {
+    config::unbind_session(&owner_id)
 }
 
 #[tauri::command]
@@ -198,8 +222,10 @@ pub fn session_load(session_id: String) -> Result<Vec<serde_json::Value>, String
 pub fn session_delete(session_id: String) -> Result<(), String> {
     let path = config::session_path(&session_id);
     match std::fs::remove_file(&path) {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Ok(()) => config::unbind_session_id(&session_id),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            config::unbind_session_id(&session_id)
+        }
         Err(e) => Err(format!("会话删除失败: {e}")),
     }
 }
@@ -329,7 +355,7 @@ pub fn get_llm_api_key() -> String {
 // ---------------------------------------------------------------------------
 // save_config — 仅保存 LLM 配置（如果 api_key 含 **** 则保留原值）。
 // v0.2（B5 收尾）：tools 不再经此命令改动——工具增删改走 hub_*_tool 命令，
-// 前端 scan_paths 桥接已拆除（PLAN-06 §2.6）。
+// 前端 scan_paths 桥接已拆除。
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
@@ -390,7 +416,7 @@ pub fn save_config(
 }
 
 // ---------------------------------------------------------------------------
-// P5 下载/导入目录（PLAN-09 P5）：URL 下载、Pack 安装、zip/目录导入统一归口
+// P5 下载/导入目录：URL 下载、Pack 安装、zip/目录导入统一归口
 // config::imported_dir()，此处仅提供读取/保存命令。
 // ---------------------------------------------------------------------------
 
@@ -406,14 +432,14 @@ pub fn set_download_dir(dir: String) -> Result<(), String> {
     config::set_download_dir(Some(dir))
 }
 
-/// PLAN-12：持久化「AI 引导已永久关闭」——点过一次 AI 创作后不再弹「没灵感」提示
+/// 持久化「AI 引导已永久关闭」——点过一次 AI 创作后不再弹「没灵感」提示
 #[tauri::command]
 pub fn set_ai_hint_dismissed(dismissed: bool) -> Result<(), String> {
     config::set_ai_hint_dismissed(dismissed)
 }
 
 // ---------------------------------------------------------------------------
-// Hub 引用层（PLAN-06 §2.7，B5 接线）
+// Hub 引用层（B5 接线）
 // ---------------------------------------------------------------------------
 
 /// linkable 目标工具清单（引用对话框的下拉源）：注册表外部工具，
@@ -458,8 +484,8 @@ pub fn hub_link_skill(
     )
 }
 
-/// 解除引用（PLAN-06 文档命令名 hub_unlink；实现名带 skill 后缀以区别于工具删除）。
-/// 仅删链接本体（PLAN-06 §2.5 铁律），copy 模式只清账本；绝不删源文件。
+/// 解除引用（文档命令名 hub_unlink；实现名带 skill 后缀以区别于工具删除）。
+/// 仅删链接本体，copy 模式只清账本；绝不删源文件。
 #[tauri::command]
 pub fn hub_unlink_skill(link_id: String) -> Result<hub::HubLink, String> {
     hub::unlink_skill(&config::get_data_dir(), &link_id)
@@ -483,7 +509,7 @@ pub fn hub_rescan() -> Vec<Skill> {
 }
 
 // ---------------------------------------------------------------------------
-// 工具管理（PLAN-06 §2.6/§2.10，B5 收尾）：设置页「工具」面板数据源。
+// 工具管理（B5 收尾）：设置页「工具」面板数据源。
 // 桥接命令 detect_paths 已退役：注册表工具恒在配置中，禁用/启用走 update。
 // ---------------------------------------------------------------------------
 
@@ -635,7 +661,7 @@ pub fn hub_remove_tool(id: String, force: bool) -> Result<(), String> {
 }
 
 // ---------------------------------------------------------------------------
-// 导入（PLAN-04 §3，Phase 1：zip）
+// 导入（Phase 1：zip）
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
@@ -669,7 +695,7 @@ pub fn commit_zip_import(
 }
 
 // ---------------------------------------------------------------------------
-// 导入（PLAN-04 §3.4，Phase 2：URL）
+// 导入（Phase 2：URL）
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
@@ -707,7 +733,7 @@ pub fn sync_deleted(current_ids: Vec<String>) -> Vec<Skill> {
 }
 
 // ---------------------------------------------------------------------------
-// Skill Packs（PLAN-05 P1）
+// Skill Packs（P1）
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
@@ -715,7 +741,7 @@ pub fn packs_list() -> Vec<pack::PackInfo> {
     pack::list_packs(&config::packs_dir())
 }
 
-/// 创建 Skill Pack（C4：打包前强制校验，PLAN-06 §3.7）。
+/// 创建 Skill Pack（C4：打包前强制校验）。
 /// force: 逃生门，缺省 false（旧前端调用不传即为 false，serde Option 缺参 → None）。
 /// 校验失败返回 `pack::PackCreateError::ValidationFailed`（结构化清单），
 /// 经 tauri `impl<T: Serialize> From<T> for InvokeError` 原样下发前端。
@@ -855,7 +881,7 @@ pub fn pack_rename(id: String, name: String) -> Result<pack::PackInfo, String> {
 }
 
 // ---------------------------------------------------------------------------
-// 模块 A：Git 仓库货架导入（PLAN-06 §1.8/§1.9/§1.11；MEMO-A）
+// 模块 A：Git 仓库货架导入
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -876,7 +902,7 @@ pub struct GitStatusInfo {
     pub behind: u32,
 }
 
-/// git 可用性 + 发布仓库健康度（设置页与发布按钮的使能依据，§1.11）
+/// git 可用性 + 发布仓库健康度（设置页与发布按钮的使能依据）
 #[tauri::command]
 pub async fn git_status() -> GitStatusInfo {
     let info = crate::git::detect();
@@ -911,7 +937,7 @@ pub async fn git_status() -> GitStatusInfo {
     out
 }
 
-/// repo_setup（§1.11）：空目录 git init + 设 remote + 初始 commit；已有仓库校验/补 remote。
+/// repo_setup：空目录 git init + 设 remote + 初始 commit；已有仓库校验/补 remote。
 #[tauri::command]
 pub async fn repo_setup(
     local_path: String,
@@ -925,7 +951,7 @@ pub async fn repo_setup(
     crate::publish::repo_setup(&local_path, &remote_url, init_if_missing).await
 }
 
-/// publish_pack（§1.7 全流程）：校验闸 → 备份 → export → index 合并 → commit → push。
+/// publish_pack（全流程）：校验闸 → 备份 → export → index 合并 → commit → push。
 #[tauri::command]
 pub async fn publish_pack(
     pack_id: String,
@@ -969,7 +995,7 @@ pub fn repo_import_commit(
 }
 
 // ---------------------------------------------------------------------------
-// skill_validate — 模块 C 校验器（PLAN-06 §3.8）
+// skill_validate — 模块 C 校验器
 // ---------------------------------------------------------------------------
 
 /// 校验任意技能目录。mode: "strict"（发布前闸）| "diagnostic"（默认，永不阻断）。
@@ -982,7 +1008,7 @@ pub fn skill_validate(path: String, mode: Option<String>) -> Result<crate::valid
     Ok(crate::validate::validate_dir(Path::new(&path), mode))
 }
 
-/// C5（PLAN-06 §3.13）：新建技能（模板模式）。落点固定 authored 自有源
+/// C5：新建技能（模板模式）。落点固定 authored 自有源
 /// （双落点选择 C9 接）。name 走 hyphen-case（FM-04 同语义）+ ≤64；
 /// description 可空——空则补占位符（创作习惯：先命名后补描述，UI 反馈 2026-08-05）。
 /// scaffold_resources：shark-skill-creator 规范层结构补全（references/scripts/assets，
@@ -1101,7 +1127,7 @@ pub(crate) fn create_skill_template_with_scaffold(
 }
 
 // ---------------------------------------------------------------------------
-// PLAN-13 工作流 T：标签系统（tags.json）
+// 工作流 T：标签系统（tags.json）
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
@@ -1115,7 +1141,7 @@ pub fn save_tags(data: tags::TagsData) -> Result<(), String> {
 }
 
 // ---------------------------------------------------------------------------
-// PLAN-13 工作流 H：Hub 显示名（中文别名，仅账本字段）
+// 工作流 H：Hub 显示名（中文别名，仅账本字段）
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
@@ -1124,7 +1150,7 @@ pub fn hub_set_display_name(link_id: String, name: String) -> Result<(), String>
 }
 
 // ---------------------------------------------------------------------------
-// PLAN-13 工作流 S：技能用途速览（summaries.json；LLM 生成在前端）
+// 工作流 S：技能用途速览（summaries.json；LLM 生成在前端）
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
@@ -1153,7 +1179,7 @@ pub fn write_summary(
 }
 
 // ---------------------------------------------------------------------------
-// PLAN-13 工作流 M 阶段 2：查重检测 + 手动处置（备份 + 回收站）
+// 工作流 M 阶段 2：查重检测 + 手动处置（备份 + 回收站）
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
@@ -1190,7 +1216,7 @@ pub fn dup_resolve_many(keep_id: String, remove_ids: Vec<String>) -> Result<Vec<
 }
 
 // ---------------------------------------------------------------------------
-// PLAN-13 工作流 M 阶段 3：智能合并（段落拼接/冲突解决在前端，落盘在后端）
+// 工作流 M 阶段 3：智能合并（段落拼接/冲突解决在前端，落盘在后端）
 // ---------------------------------------------------------------------------
 
 #[tauri::command]

@@ -1,4 +1,4 @@
-//! Zip 导入管线（PLAN-04 §3，Phase 1）。
+//! Zip 导入管线（Phase 1）。
 //! URL 导入（Phase 2）下载落盘后复用本模块的 preview/commit；
 //! git clone 兜底统一走 `shelf::clone_repo_to_tmp`（收敛双 clone 通道，见 preview_via_clone）。
 
@@ -31,7 +31,7 @@ pub struct ImportPreview {
     pub candidates: Vec<ImportCandidate>,
     /// URL 导入的 pending 凭证（zip 本地导入为 None）
     pub token: Option<String>,
-    /// zip 内含 pack.json 时的探测结果（PLAN-05：前端据此分流到 Pack 导入）
+    /// zip 内含 pack.json 时的探测结果（前端据此分流到 Pack 导入）
     pub pack: Option<crate::pack::PackDetect>,
 }
 
@@ -219,7 +219,7 @@ pub fn commit_zip_import(
     commit_from_dir(&root, stem, selected, replace, target_base, &source, "zip")
 }
 
-/// 从已解压/已 clone 的源目录提交（zip 与 URL 共用，PLAN-04 §3.4）
+/// 从已解压/已 clone 的源目录提交（zip 与 URL 共用）
 fn commit_from_dir(
     src_root: &Path,
     stem: &str,
@@ -305,15 +305,15 @@ fn commit_from_dir(
 }
 
 // ---------------------------------------------------------------------------
-// URL 导入（PLAN-04 §3.4，Phase 2：archive 优先，git clone 兜底）
+// URL 导入（Phase 2：archive 优先，git clone 兜底）
 // ---------------------------------------------------------------------------
 
 enum PendingSource {
     /// zip 下载缓存（zip 路径 + 所属 App tmp 目录）；commit 结束后显式清理，
-    /// 取消预览的残留由 App 启动即清兜底（PLAN-06 §1.8 三重保险，不用系统 TEMP）。
+    /// 取消预览的残留由 App 启动即清兜底（不用系统 TEMP）。
     Zip(PathBuf, PathBuf, String),
     /// clone 目录本体（落 App tmp 区，非 RAII）；commit 结束后显式清理，
-    /// 用户取消预览的残留由 App 启动即清兜底（PLAN-06 §1.8 三重保险）。
+    /// 用户取消预览的残留由 App 启动即清兜底。
     Dir(PathBuf, String),
 }
 
@@ -537,7 +537,7 @@ async fn preview_via_clone(url: &str, archive_err: &str) -> Result<ImportPreview
     if !crate::git::detect().installed {
         return Err(format!("{}；且本机无 git 可兜底", archive_err));
     }
-    // 收敛双 clone 通道（PLAN-06 §1.8）：统一走 shelf::clone_repo_to_tmp——
+    // 收敛双 clone 通道：统一走 shelf::clone_repo_to_tmp——
     // 落 <data_dir>/tmp（App 启动即清）并带 500MB 体积闸，不再用系统 TEMP。
     let clone_dir = crate::shelf::clone_repo_to_tmp(url)
         .await

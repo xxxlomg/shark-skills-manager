@@ -383,7 +383,7 @@ html[data-accent="coral"] {
   from { opacity: 0; transform: translateY(-12px) scale(0.96); }
 }
 /* 纯 opacity：fill-mode both 会保留 translateY(0)（非 none transform），
-   会破坏工作台 sticky 顶栏的包含块 —— 故去掉 transform（PLAN-08 §6①）。 */
+   会破坏工作台 sticky 顶栏的包含块 —— 故去掉 transform。 */
 @keyframes view-enter {
   from { opacity: 0; }
   to { opacity: 1; }
@@ -470,7 +470,7 @@ html[data-accent="coral"] {
   border-bottom: 1px solid var(--stroke);
 }
 
-/* 侧栏表面（PLAN-10 侧栏重构）：全高侧边栏，右边框分隔主内容区 */
+/* 侧栏表面（侧栏重构）：全高侧边栏，右边框分隔主内容区 */
 .glass-sidebar {
   background: var(--glass);
   border-right: 1px solid var(--stroke);
@@ -966,7 +966,7 @@ html[data-accent="coral"] {
   animation: fade-in-soft 0.6s ease-out both;
 }
 
-/* ==================== PLAN-12 ⑤：代码编辑器语法高亮 ====================
+/* ==================== ⑤：代码编辑器语法高亮 ====================
    轻量 tokenizer 的着色类。用主题变量 + 中等饱和固定色，明暗两套主题都可读。 */
 .tok-c { color: var(--color-text-tertiary); font-style: italic; }  /* 注释 */
 .tok-s { color: #b4691e; }                                        /* 字符串 */

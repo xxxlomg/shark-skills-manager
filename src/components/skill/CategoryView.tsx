@@ -77,7 +77,7 @@ export function CategoryView({
   const sel = useBatchSelection();
   const [deleteOpen, setDeleteOpen] = useState(false);
 
-  // ===== PLAN-19：文件管理器树（受控：树 + 路径均来自 App 层），下钻 stack 由 path 派生 =====
+  // ===== 文件管理器树（受控：树 + 路径均来自 App 层），下钻 stack 由 path 派生 =====
   const [drawerFile, setDrawerFile] = useState<LibTreeFile | null>(null);
 
   const stack = useMemo<LibTreeNode[]>(() => {

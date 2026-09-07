@@ -1,17 +1,17 @@
-//! 模块 C：技能规范校验器（PLAN-06 §3）
+//! 模块 C：技能规范校验器
 //!
 //! C1：骨架 + FM 规则组。C2：CL/CX 生态规则组。
 //! - 独立模块，不依赖扫描管线：可校验任意目录（含未纳入扫描的草稿目录）。
-//! - 双轨模式（§3.6）：Diagnostic 永不 fail（passed 恒 true）；Strict 下 Error 阻断。
-//! - 规则表 = 数据 + 检查函数（§3.5）；strict_error 规则在严格模式升 Error。
-//! - FM-01..08（§3.5 FM 层）：FM 层只做类型/格式检查，绝不报"未知字段"（CL/CX 层职责，C2）。
-//! - CL-01..03 / CX-01..04（C2，§3.5 + R2-d）：白名单按生态分治——CL 七字段
+//! - 双轨模式：Diagnostic 永不 fail（passed 恒 true）；Strict 下 Error 阻断。
+//! - 规则表 = 数据 + 检查函数；strict_error 规则在严格模式升 Error。
+//! - FM-01..08（FM 层）：FM 层只做类型/格式检查，绝不报"未知字段"（CL/CX 层职责，C2）。
+//! - CL-01..03 / CX-01..04（C2）：白名单按生态分治——CL 七字段
 //!   （含 user-invocable / disable-model-invocation），CX 五字段（Codex quick_validate.py
 //!   基线）。两字段在 CX 侧报未知属正确行为，由兼容矩阵分流（Claude pass / Codex warn）。
 //! - PM-01：SkillsShark 平台元数据使用 `metadata.skills-shark` 命名空间；平台字段不加入
 //!   CL/CX 顶层白名单，避免被目标生态误认为原生 frontmatter 字段。
 //!
-//! 规则来源：两份官方 skill-creator 的 quick_validate.py 差异比对（§3.1）：
+//! 规则来源：两份官方 skill-creator 的 quick_validate.py 差异比对：
 //! - name/description 必填、description 无尖括号 = 两家共识（All）
 //! - name hyphen-case / name ≤64 / description ≤1024 = Codex 侧规则（Codex）
 //! - user-invocable / disable-model-invocation 布尔类型 = Claude 合法字段（Claude）
@@ -21,10 +21,10 @@ use serde_yaml_ng::{Mapping, Value};
 use std::path::{Path, PathBuf};
 
 // ---------------------------------------------------------------------------
-// 数据结构（§3.6 统一输出）
+// 数据结构（统一输出）
 // ---------------------------------------------------------------------------
 
-/// 校验模式（§3.6 双轨）
+/// 校验模式（双轨）
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Mode {
@@ -218,13 +218,13 @@ const PLATFORM_METADATA_NAMESPACE: &str = "skills-shark";
 const PLATFORM_TRIGGER_KEYWORDS: &str = "trigger_keywords";
 
 // ---------------------------------------------------------------------------
-// 规则表（§3.5 数据 + 检查函数）
+// 规则表（数据 + 检查函数）
 // ---------------------------------------------------------------------------
 
 struct RuleSpec {
     id: &'static str,
     base: Severity,
-    /// strict 模式下 Warn 升 Error（§3.6：名称规范等卫生类规则严格模式升级）
+    /// strict 模式下 Warn 升 Error（名称规范等卫生类规则严格模式升级）
     strict_error: bool,
     eco: Eco,
     check: fn(&SkillFileset) -> Option<(String, String)>, // (message, hint)
@@ -426,9 +426,9 @@ fn check_platform_metadata(fs: &SkillFileset) -> Option<(String, String)> {
     None
 }
 
-// ---- CL：Claude 生态（C2，§3.5 + R2-d）----
+// ---- CL：Claude 生态（C2）----
 
-/// CL 白名单（R2-d）= Codex 基线五字段 ∪ Claude Code 两个合法布尔字段
+/// CL 白名单 = Codex 基线五字段 ∪ Claude Code 两个合法布尔字段
 const CL_WHITELIST: &[&str] = &[
     "name",
     "description",
@@ -439,7 +439,7 @@ const CL_WHITELIST: &[&str] = &[
     "disable-model-invocation",
 ];
 
-/// CX 白名单 = Codex quick_validate.py 基线五字段（R2-d：不收录两布尔字段）
+/// CX 白名单 = Codex quick_validate.py 基线五字段（不收录两布尔字段）
 const CX_WHITELIST: &[&str] = &["name", "description", "license", "allowed-tools", "metadata"];
 
 /// 名单外字段列表化（排序保证输出稳定）。非字符串键属 YAML 异常形态，
@@ -500,7 +500,7 @@ fn check_cl03(fs: &SkillFileset) -> Option<(String, String)> {
     }
 }
 
-// ---- CX：Codex 生态（C2，§3.5 + R2-d + §3.1 openai.yaml）----
+// ---- CX：Codex 生态（C2，openai.yaml 规则）----
 
 /// CX-01：openai.yaml 存在性（Info）。仅当 agents/ 目录已存在（Codex 产品层意图）
 /// 时才提示缺失——纯 Claude 形态（无 agents/）缺席属正常，不打扰
@@ -515,7 +515,7 @@ fn check_cx01(fs: &SkillFileset) -> Option<(String, String)> {
     }
 }
 
-/// CX-02：CX 白名单外字段（Codex 五字段基线）。R2-d 核心：
+/// CX-02：CX 白名单外字段（Codex 五字段基线）。核心语义：
 /// user-invocable / disable-model-invocation 在此报未知是正确行为（矩阵分流）
 fn check_cx02(fs: &SkillFileset) -> Option<(String, String)> {
     let m = fs.frontmatter.as_ref()?;
@@ -571,8 +571,8 @@ fn check_cx04(fs: &SkillFileset) -> Option<(String, String)> {
 }
 
 /// FM 规则组（C1）+ CL/CX 规则组（C2）。FS 规则组待后续追加。
-/// CL/CX id 分配：§3.6 输出样例将"未知字段"钉在 CX-02，故 CX-01 = openai.yaml 存在性；
-/// CL 侧无样例约束，按 §3.5 行文顺序取 CL-01..03（PLAN-06 标 CL-01..05 但仅定义三条语义）
+/// CL/CX id 分配：输出样例将"未知字段"钉在 CX-02，故 CX-01 = openai.yaml 存在性；
+/// CL 侧无样例约束，按生态规则顺序取 CL-01..03（原规划标 CL-01..05 但仅定义三条语义）
 static RULES: &[RuleSpec] = &[
     RuleSpec { id: "FM-01", base: Severity::Error, strict_error: false, eco: Eco::All, check: check_fm01 },
     RuleSpec { id: "FM-02", base: Severity::Error, strict_error: false, eco: Eco::All, check: check_fm02 },
@@ -615,7 +615,7 @@ pub fn validate_fileset(fs: &SkillFileset, mode: Mode) -> ValidationReport {
         }
     }
     let passed = match mode {
-        Mode::Diagnostic => true, // §3.6：诊断模式永不 fail
+        Mode::Diagnostic => true, // 诊断模式永不 fail
         Mode::Strict => !issues.iter().any(|i| i.severity == Severity::Error),
     };
     ValidationReport {
@@ -629,7 +629,7 @@ pub fn validate_fileset(fs: &SkillFileset, mode: Mode) -> ValidationReport {
     }
 }
 
-/// 校验任意技能目录（§3.8：独立可用，创作页实时校验也走它）。
+/// 校验任意技能目录（独立可用，创作页实时校验也走它）。
 pub fn validate_dir(dir: &Path, mode: Mode) -> ValidationReport {
     validate_fileset(&load_fileset(dir), mode)
 }
@@ -853,7 +853,7 @@ mod tests {
         assert!(rule_ids(&rep).contains(&"FM-08".to_string()));
         // Claude 生态字段：claude 侧 FM-08 类型错误 → fail
         assert_eq!(rep.matrix.claude.verdict, Verdict::Fail);
-        // C2 后：user-invocable 在 Codex 侧属未知字段（R2-d 正确行为），
+        // C2 后：user-invocable 在 Codex 侧属未知字段（正确行为），
         // CX-02 严格模式升 Error → codex fail（诊断模式下为 warn）
         assert_eq!(rep.matrix.codex.verdict, Verdict::Fail);
     }
@@ -865,7 +865,7 @@ mod tests {
         assert!(!rule_ids(&rep).contains(&"FM-08".to_string()));
     }
 
-    // ---- 双轨模式（§3.6） ----
+    // ---- 双轨模式 ----
 
     #[test]
     fn dual_track_diagnostic_never_fails() {
@@ -912,9 +912,9 @@ mod tests {
     }
 
     /// Codex 官方 skill-creator 原件（真机环境测试：文件不存在则跳过）。
-    /// 验收口径（PLAN-06 §3.1）：FM 层对官方原件应全绿——官方自家校验器的
+    /// 验收口径：FM 层对官方原件应全绿——官方自家校验器的
     /// 并集规则就出自这里。
-    /// C2 扩展（PLAN-06 C2 验收「官方原件 fixture 回归全绿」）：原件形态
+    /// C2 扩展（官方原件 fixture 回归全绿）：原件形态
     /// （frontmatter = name+description+metadata，带 agents/openai.yaml，
     /// 2026-08-05 逐字核实）应全规则零 issue——我们的 CL/CX 规则就提取自
     /// 这些官方件（quick_validate.py / references/openai_yaml.md）。
@@ -1008,7 +1008,7 @@ mod tests {
 
     #[test]
     fn cl02_unknown_fields_dual_track_and_listing() {
-        // PLAN-06 C2 验收样本：未知字段 诊断=提示、严格=Error；多字段列表化且排序稳定
+        // 验收样本：未知字段 诊断=提示、严格=Error；多字段列表化且排序稳定
         let content = "---\nname: ok-skill\ndescription: d\ncategory: tools\nzebra-extra: 1\n---\n";
         let (_t, fs) = fileset_from(content);
         let diag = validate_fileset(&fs, Mode::Diagnostic);
@@ -1079,7 +1079,7 @@ mod tests {
 
     #[test]
     fn boolean_fields_matrix_split_claude_pass_codex_warn() {
-        // R2-d 核心语义：user-invocable 在 CL 白名单合法（pass），在 CX 侧报未知（正确行为）
+        // 核心语义：user-invocable 在 CL 白名单合法（pass），在 CX 侧报未知（正确行为）
         let (_t, fs) = fileset_from("---\nname: ok-skill\ndescription: d\nuser-invocable: true\n---\n");
         let rep = validate_fileset(&fs, Mode::Diagnostic);
         assert!(!rule_ids(&rep).contains(&"CL-02".to_string()), "CL 白名单收录 user-invocable");

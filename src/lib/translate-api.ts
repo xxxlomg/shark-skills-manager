@@ -199,7 +199,7 @@ async function computeHash(text: string): Promise<string> {
   return sha256Hex(text);
 }
 
-/** SHA-256 hex（PLAN-13 S 速览失效检测复用） */
+/** SHA-256 hex（S 速览失效检测复用） */
 export async function sha256Hex(text: string): Promise<string> {
   const encoder = new TextEncoder();
   const data = encoder.encode(text);

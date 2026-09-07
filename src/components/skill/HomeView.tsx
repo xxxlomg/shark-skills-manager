@@ -23,9 +23,9 @@ interface HomeViewProps {
   onZipImport: () => void;
   /** 技能库页头「新建文件夹」入口（顶栏布局的主入口） */
   onNewFolder?: () => void;
-  /** PLAN-13 M 阶段 2：打开查重面板 */
+  /** M 阶段 2：打开查重面板 */
   onDupCheck?: () => void;
-  /** PLAN-14：进入「全部技能」扁平视图 */
+  /** 进入「全部技能」扁平视图 */
   onAllSkills?: () => void;
   /** 打开「层级结构」树视图：校验扫描映射与磁盘结构 */
   onScanTree?: () => void;

@@ -42,7 +42,7 @@ import {
   type FileNode,
   type Skill,
 } from "@/lib/api";
-import { generateFileAssistStream } from "@/lib/authoring-api";
+import { generateFileAssistStream, sanitizeGeneratedText } from "@/lib/authoring-api";
 import { CodeEditor, langOf } from "./CodeEditor";
 import {
   buildVirtualTree,
@@ -53,13 +53,21 @@ import {
 } from "@/lib/file-tree-utils";
 
 
+function normalizeRelPath(path: string): string {
+  return path
+    .replace(/\\/g, "/")
+    .split("/")
+    .filter((part) => part && part !== ".")
+    .join("/");
+}
+
 /**
- * W4 + PLAN-11 阶段 3 + PLAN-12：附带资源文件树（scripts/references/assets 等）。
+ * W4 + 阶段 3 + 改进：附带资源文件树（scripts/references/assets 等）。
  * 3.3 新建改「选目录 + 文件名」（标准目录 + 一句话用途，规范性 = 合理默认 + 引导）；
  * 3.4 上传入口（dialog 选文件 → 选目标目录 → skill_import_file）；
  * 3.5 编辑已有文件（文本可存 / 二进制只读）；
  * 3.6 「插入引用」到正文（references/scripts 文案模板，可手改）。
- * PLAN-12：① 树整体放大（可读性）；② 上传可选目标目录；③ 编辑弹窗加「模板」+「AI 帮写」。
+ * 改进：① 树整体放大（可读性）；② 上传可选目标目录；③ 编辑弹窗加「模板」+「AI 帮写」。
  * 后端 skill_list_files / skill_delete_file / skill_write_file / skill_import_file（C6 同闸）。
  */
 interface FileTreeProps {
@@ -71,6 +79,11 @@ interface FileTreeProps {
    * FileTree 会在内存中渲染这些文件的结构树与内容预览，无需等待保存。
    */
   virtualFiles?: Array<{ path: string; content: string }>;
+  /**
+   * 受控打开路径：外部传入后自动展开父目录并打开对应文件。
+   * 传入的相对路径支持 / 或 \\ 分隔符；null/undefined 不会关闭用户手动打开的文件。
+   */
+  openPath?: string | null;
   /**
    * 受控聚焦（附件生成直播）：外部指定生成中的文件路径时，
    * 自动展开父目录链并打开该文件，内容随 virtualFiles 流式刷新。
@@ -104,7 +117,7 @@ function NodeRow({
   /** 高亮路径（审查/修复进行中）：行加轮廓与底色 */
   highlight?: boolean;
 }) {
-  // PLAN-12 ①：缩进加宽，行更高，字更大
+  // ①：缩进加宽，行更高，字更大
   const pad = { paddingLeft: `${10 + depth * 16}px` };
   if (node.is_dir) {
     const open = !collapsed.has(node.rel);
@@ -199,6 +212,7 @@ export function FileTree({
   skill,
   onInsertReference,
   virtualFiles,
+  openPath,
   autoOpenPath,
   onFileContentChange,
   highlightPath,
@@ -210,7 +224,7 @@ export function FileTree({
   const [newOpen, setNewOpen] = useState(false);
   const [newDir, setNewDir] = useState("scripts");
   const [newName, setNewName] = useState("");
-  // 上传（3.4 + PLAN-12 ② 选目标目录）
+  // 上传（3.4 + ② 选目标目录）
   const [uploadPicked, setUploadPicked] = useState<string | null>(null);
   const [uploadDir, setUploadDir] = useState("assets");
   const [uploadName, setUploadName] = useState("");
@@ -220,7 +234,7 @@ export function FileTree({
   const [openBinary, setOpenBinary] = useState(false);
   const [openDraft, setOpenDraft] = useState("");
   const [openSaving, setOpenSaving] = useState(false);
-  // PLAN-12 ③：模板 + AI 帮写
+  // ③：模板 + AI 帮写
   const [tplKey, setTplKey] = useState<string>("");
   const [assistOpen, setAssistOpen] = useState(false);
   const [assistIdea, setAssistIdea] = useState("");
@@ -244,13 +258,21 @@ export function FileTree({
   }, [load]);
 
   // 虚拟附件（未保存预览）：内存树 + 内容映射
-  const virtualTree = useMemo(
-    () => (virtualFiles?.length ? buildVirtualTree(virtualFiles) : []),
+  const normalizedVirtualFiles = useMemo(
+    () =>
+      (virtualFiles ?? []).map((file) => ({
+        ...file,
+        path: normalizeRelPath(file.path),
+      })),
     [virtualFiles],
   );
+  const virtualTree = useMemo(
+    () => (normalizedVirtualFiles.length ? buildVirtualTree(normalizedVirtualFiles) : []),
+    [normalizedVirtualFiles],
+  );
   const virtualMap = useMemo(
-    () => new Map((virtualFiles ?? []).map((f) => [f.path, f.content])),
-    [virtualFiles],
+    () => new Map(normalizedVirtualFiles.map((f) => [f.path, f.content])),
+    [normalizedVirtualFiles],
   );
   // 合并：磁盘树 + 尚未落盘的虚拟节点
   const mergedTree = useMemo(() => {
@@ -260,11 +282,15 @@ export function FileTree({
     return [...tree, ...virtualTree.filter((v) => !diskRels.has(v.rel))];
   }, [tree, virtualTree]);
 
-  // 受控聚焦（附件生成直播）：外部指定生成中的文件路径时，
-  // 自动展开父目录链并打开该文件；虚拟附件直接从内存取内容（随流式刷新）
+  // 受控打开：openPath 用于聊天文件卡片，autoOpenPath 保留给附件生成直播。
+  // 虚拟文件优先从内存读取；磁盘文件异步读取，并取消过期请求。
+  const requestedOpenPath = autoOpenPath ?? openPath;
+  const requestedRel = requestedOpenPath ? normalizeRelPath(requestedOpenPath) : "";
+  const requestedVirtualContent = requestedRel ? virtualMap.get(requestedRel) : undefined;
   useEffect(() => {
-    if (!autoOpenPath) return;
-    const parts = autoOpenPath.split("/").filter(Boolean);
+    if (!requestedRel) return;
+
+    const parts = requestedRel.split("/").filter(Boolean);
     if (parts.length > 1) {
       setCollapsed((s) => {
         const next = new Set(s);
@@ -274,17 +300,40 @@ export function FileTree({
         return next;
       });
     }
-    setOpenRel(autoOpenPath);
-    setOpenBinary(false);
-    const content = virtualMap.get(autoOpenPath);
-    if (content !== undefined) {
-      setOpenDraft(content);
-    } else if (skill) {
-      readSkillFile(`${skill.skill_dir}/${autoOpenPath}`)
-        .then(setOpenDraft)
-        .catch(() => setOpenDraft(""));
+
+    setOpenRel(requestedRel);
+    if (requestedVirtualContent !== undefined) {
+      setOpenBinary(false);
+      setOpenDraft(requestedVirtualContent);
+      return;
     }
-  }, [autoOpenPath, virtualMap, skill]);
+
+    if (!skill) {
+      setOpenBinary(false);
+      setOpenDraft("");
+      return;
+    }
+
+    if (isBinaryName(requestedRel)) {
+      setOpenBinary(true);
+      setOpenDraft("");
+      return;
+    }
+
+    setOpenBinary(false);
+    let cancelled = false;
+    readSkillFile(`${skill.skill_dir}/${requestedRel}`)
+      .then((content) => {
+        if (!cancelled) setOpenDraft(content);
+      })
+      .catch(() => {
+        if (!cancelled) setOpenDraft("");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [requestedRel, requestedVirtualContent, skill]);
 
   // 切换文件时重置 AI 帮写 / 模板状态
   useEffect(() => {
@@ -390,7 +439,7 @@ export function FileTree({
     }
   };
 
-  // 3.4 + PLAN-12 ②：上传 = 选文件 → 选目标目录/文件名 → 确认导入
+  // 3.4 + ②：上传 = 选文件 → 选目标目录/文件名 → 确认导入
   const pickUpload = async () => {
     if (uploading) return;
     try {
@@ -431,7 +480,7 @@ export function FileTree({
     }
   };
 
-  // PLAN-12 ③：套用模板（若已有内容先确认覆盖）
+  // ③：套用模板（若已有内容先确认覆盖）
   const applyTemplate = (key: string) => {
     setTplKey(key);
     const tpl = templatesFor(openRel ?? "").find((t) => t.label === key);
@@ -444,7 +493,7 @@ export function FileTree({
     }
   };
 
-  // PLAN-12 ③：AI 帮写——读 SKILL.md 上下文 → 流式直写编辑框
+  // ③：AI 帮写——读 SKILL.md 上下文 → 流式直写编辑框
   const runAssist = async () => {
     if (!openRel || assisting) return;
     if (!skill) {
@@ -473,20 +522,24 @@ export function FileTree({
         } catch {
           body = "";
         }
-        await generateFileAssistStream(
+        const result = await generateFileAssistStream(
           {
             idea,
             fileRel: openRel,
             skillName,
             skillDescription,
             skillBody: body,
+            currentFileContent: openDraft,
           },
           (d) => {
             acc += d;
-            setOpenDraft(acc);
+            setOpenDraft(sanitizeGeneratedText(acc));
           },
           ctrl.signal,
         );
+        const cleanText = sanitizeGeneratedText(result.text);
+        setOpenDraft(cleanText);
+        if (onFileContentChange && openRel) onFileContentChange(openRel, cleanText);
         toast.success("AI 帮写完成——检查后点保存落盘");
       } catch (e) {
         if (e instanceof DOMException && e.name === "AbortError") {
@@ -581,7 +634,7 @@ export function FileTree({
       </div>
       </div>
 
-      {/* 右：内联编辑器列（PLAN-12 ④ 重设计：告别小弹窗，IDE 式左树右编辑） */}
+      {/* 右：内联编辑器列（④ 重设计：告别小弹窗，IDE 式左树右编辑） */}
       <div className="flex min-w-0 flex-1 flex-col">
         {openRel === null ? (
           <div className="flex h-full items-center justify-center rounded-md border border-dashed border-border/50 text-sm text-text-tertiary">
@@ -681,7 +734,7 @@ export function FileTree({
                   </div>
                 </div>
               )}
-              {/* 编辑区：CodeEditor（行号 + 语法高亮，PLAN-12 ⑤） */}
+              {/* 编辑区：CodeEditor（行号 + 语法高亮，⑤） */}
               <CodeEditor
                 value={openDraft}
                 onChange={(v) => {
@@ -697,7 +750,7 @@ export function FileTree({
         )}
       </div>
 
-      {/* PLAN-12 ③：覆盖确认（模板 / AI 帮写写入前） */}
+      {/* ③：覆盖确认（模板 / AI 帮写写入前） */}
       <Dialog open={overwriteAction !== null} onOpenChange={(o) => !o && setOverwriteAction(null)}>
         <DialogContent className="max-w-sm border-border/60 bg-card">
           <DialogHeader>
@@ -723,7 +776,7 @@ export function FileTree({
         </DialogContent>
       </Dialog>
 
-      {/* PLAN-12 ②：上传目标目录 + 文件名 */}
+      {/* ②：上传目标目录 + 文件名 */}
       <Dialog open={uploadPicked !== null} onOpenChange={(o) => !o && setUploadPicked(null)}>
         <DialogContent className="max-w-sm border-border/60 bg-card">
           <DialogHeader>

@@ -44,6 +44,8 @@ export interface InterviewMessage {
   id: string;
   role: "assistant" | "user" | "system";
   content: string;
+  /** AI 本轮思考过程，随对应 assistant 消息保留，避免下一轮覆盖。 */
+  reasoning?: string;
   options?: InterviewOption[];
   stage: InterviewStage;
   timestamp: number;
@@ -96,8 +98,23 @@ export class InterviewEngine {
     return `m${++this.msgCounter}-${Date.now()}`;
   }
 
-  pushAssistant(content: string, options?: InterviewOption[], stage: InterviewStage = "discover"): void {
-    this.messages.push({ id: this.nextMsgId(), role: "assistant", content, options, stage, timestamp: Date.now() });
+  pushAssistant(
+    content: string,
+    options?: InterviewOption[],
+    stage: InterviewStage = "discover",
+    reasoning?: string,
+  ): InterviewMessage {
+    const message: InterviewMessage = {
+      id: this.nextMsgId(),
+      role: "assistant",
+      content,
+      reasoning: reasoning?.trim() || undefined,
+      options,
+      stage,
+      timestamp: Date.now(),
+    };
+    this.messages.push(message);
+    return message;
   }
 
   pushUser(content: string, stage: InterviewStage = "discover"): void {

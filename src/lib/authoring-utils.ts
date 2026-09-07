@@ -23,7 +23,7 @@ export function splitFrontmatter(md: string): { fm: string; body: string } | nul
 
 /**
  * 「我的描述」→ description。
- * PLAN-11 阶段 0：面板单输入，description 即「我的描述」(purpose)，不再拼「何时用」。
+ * 阶段 0：面板单输入，description 即「我的描述」(purpose)，不再拼「何时用」。
  */
 export function buildDesc(d: WbDraft): string {
   return d.purpose.trim();

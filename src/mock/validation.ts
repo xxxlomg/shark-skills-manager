@@ -24,7 +24,7 @@ const CASES: Record<string, MockCase> = {
     claude: { verdict: "pass", notes: [] },
     codex: { verdict: "pass", notes: [] },
   },
-  // codex 单侧 warn：default_prompt 未含 $skill-name（§3.6 示例场景）
+  // codex 单侧 warn：default_prompt 未含 $skill-name（示例场景）
   c2: {
     claude: { verdict: "pass", notes: [] },
     codex: { verdict: "warn", notes: ["default_prompt 未含 $skill-name"] },

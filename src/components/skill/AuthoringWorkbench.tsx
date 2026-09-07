@@ -30,6 +30,7 @@ import {
 import { cn } from "@/lib/utils";
 import { MarkdownPreview } from "@/components/common/MarkdownPreview";
 import { FileTree } from "./FileTree";
+import { FileArtifactPreview } from "./FileArtifactPreview";
 import { SkillReviewPanel, type ReviewReportMeta } from "./SkillReviewPanel";
 import { SkillReviewBrief } from "./SkillReviewBrief";
 import {
@@ -45,8 +46,8 @@ import {
   type ToolInfo,
   type ValidationReport,
 } from "@/lib/api";
-import { continueBodyStream, fixSkillStream, generateAttachmentDraftStream, extractAttachmentRefs, reviewSkillStream, summarizeSkillTitle, type SkillReviewResult } from "@/lib/authoring-api";
-import { sessionAppend, sessionLoad, sessionDelete, newSessionId, rememberSessionId, recallSessionId, forgetSessionId, eventsToMessages, type SessionEvent } from "@/lib/session-store";
+import { chatAuthoringStream, continueBodyStream, fixSkillStream, generateAttachmentDraftStream, generateFileAssistStream, extractAttachmentRefs, reviewSkillStream, sanitizeGeneratedText, summarizeSkillTitle, type SkillReviewResult } from "@/lib/authoring-api";
+import { sessionAppend, sessionLoad, sessionDelete, newSessionId, rememberSessionId, recallSessionId, forgetSessionId, eventsToMessages, eventsToHistoryMessages, type SessionEvent } from "@/lib/session-store";
 import { loadLLMConfig } from "@/lib/llm-config";
 import { isMockMode, MOCK_TOOLS } from "@/mock";
 import { NAME_RE, fmtSavedAt, type WbDraft } from "@/lib/wb-draft";
@@ -54,16 +55,20 @@ import { useWorkbenchDraft } from "@/hooks/useWorkbenchDraft";
 import {
   createDefaultCreationState,
   CreationStage,
+  getAuthoringMessageKind,
+  normalizeAuthoringResultMeta,
   migrateWbDraftToCreationState,
   mergeWbDraftIntoCreationState,
+  type AuthoringResultAction,
+  type AuthoringResultMeta,
   type InterviewMessage,
   type SkillCreationState,
 } from "@/lib/creation-state";
+import { detectAuthoringIntent } from "@/lib/authoring-intent";
 import { CreationGuidePanel } from "./CreationGuidePanel";
 import { InterviewGuide } from "./InterviewGuide";
 import { AuthoringHeader } from "./AuthoringHeader";
 import { DraftRestoreBanner } from "./DraftRestoreBanner";
-import { StreamPane } from "./StreamPane";
 import { AttachProposalDialog } from "./AttachProposalDialog";
 import {
   appendPlatformMetadata,
@@ -78,11 +83,11 @@ import {
 } from "@/lib/authoring-utils";
 
 /**
- * 创作工作台（PLAN-08 精修第三轮）。
+ * 创作工作台（精修第三轮）。
  * R3-1 「我的描述」改为左侧推拉抽屉（shadcn Sheet，非模态）；
- *      PLAN-11 阶段 0：删「何时用」，抽屉只留「我的描述」单输入（description 即 purpose）；
+ *      阶段 0：删「何时用」，抽屉只留「我的描述」单输入（description 即 purpose）；
  * R3-2 整页不滚：h-dvh 列布局，编辑器/参考/流式 pane 全部内部滚动；
- * R3-3 内容参考 & AI 流式改为右侧并列辅助 pane（不再替换编辑器、不挤压左工作区）。
+ * R3-3 内容参考保持编辑列内；AI 流式结果回到创作引导对话中，确认后再写入正文。
  * 继承：X1 沉浸顶；X4 AI 创作 Dialog + 流式 + 回显；X5 emoji 全链路。
  */
 interface AuthoringWorkbenchProps {
@@ -115,31 +120,41 @@ export function AuthoringWorkbench({
   const attAbortRef = useRef<AbortController | null>(null);
   /** 用户在 FileTree 内手工编辑过的文件内容（保存时统一落盘，无局部保存按钮） */
   const editedFilesRef = useRef<Record<string, string>>({});
-  // T3：Agent 会话（事件溯源日志）——唯一 session id + id↔draft 映射（localStorage）
+  // T3：Agent 会话（事件溯源日志）——唯一 session id + 产品数据目录内的 id↔draft 映射
   const sessionIdRef = useRef<string | null>(null);
   const sessionEventsRef = useRef<SessionEvent[]>([]);
-  const ensureSession = useCallback(async (): Promise<string> => {
-    if (sessionIdRef.current) return sessionIdRef.current;
-    let sid = recallSessionId(draftId);
-    if (!sid) {
-      sid = newSessionId();
-      rememberSessionId(draftId, sid);
+  const sessionInitRef = useRef<Promise<string> | null>(null);
+  const sessionWriteQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const ensureSession = useCallback((): Promise<string> => {
+    if (sessionIdRef.current) return Promise.resolve(sessionIdRef.current);
+    if (sessionInitRef.current) return sessionInitRef.current;
+
+    const init = (async () => {
+      let sid = await recallSessionId(draftId);
+      if (!sid) sid = newSessionId();
       sessionEventsRef.current = await sessionLoad(sid);
       if (sessionEventsRef.current.length === 0) {
-        await sessionAppend(sid, { kind: "session_created", content: draftId });
+        const created: SessionEvent = { kind: "session_created", content: draftId };
+        sessionEventsRef.current.push(created);
+        await sessionAppend(sid, created);
       }
-    } else {
-      sessionEventsRef.current = await sessionLoad(sid);
-    }
-    sessionIdRef.current = sid;
-    return sid;
+      await rememberSessionId(draftId, sid);
+      sessionIdRef.current = sid;
+      return sid;
+    })();
+    sessionInitRef.current = init;
+    return init;
   }, [draftId]);
   const recordSession = useCallback(
-    (ev: SessionEvent) => {
-      void ensureSession().then((sid) => {
+    (ev: SessionEvent): Promise<void> => {
+      const write = sessionWriteQueueRef.current.then(async () => {
+        const sid = await ensureSession();
         sessionEventsRef.current.push(ev);
-        void sessionAppend(sid, ev);
+        await sessionAppend(sid, ev);
       });
+      // A failed write must not permanently block later user messages.
+      sessionWriteQueueRef.current = write.catch(() => undefined);
+      return write;
     },
     [ensureSession],
   );
@@ -150,30 +165,13 @@ export function AuthoringWorkbench({
     let cancelled = false;
     void ensureSession().then(() => {
       if (cancelled) return;
-      const mapped: import("@/lib/creation-state").InterviewMessage[] = [];
-      for (const ev of sessionEventsRef.current) {
-        if (ev.kind === "user_msg") {
-          mapped.push({ id: `hist-${mapped.length}-u`, role: "user", content: ev.content });
-        } else if (ev.kind === "assistant_msg") {
-          mapped.push({
-            id: `hist-${mapped.length}-a`,
-            role: "assistant",
-            content: ev.content,
-            reasoning: ev.extra?.reasoning,
-          });
-        } else if (ev.kind === "generation_result") {
-          mapped.push({ id: `hist-${mapped.length}-g`, role: "assistant", content: "✅ 正文已生成（见编辑区）" });
-        } else if (ev.kind === "attachment_result") {
-          mapped.push({
-            id: `hist-${mapped.length}-f`,
-            role: "assistant",
-            content: `📎 已生成附件 ${ev.extra?.file ?? ""}`,
-          });
-        }
-      }
+      const mapped = eventsToHistoryMessages(sessionEventsRef.current);
       if (mapped.length > 0) {
-        guideMsgSeq.current = mapped.length;
-        setGuideMessages(mapped);
+        guideMsgSeq.current = Math.max(guideMsgSeq.current, mapped.length);
+        setGuideMessages((current) => {
+          const currentIds = new Set(current.map((message) => message.id));
+          return [...mapped, ...current.filter((message) => !currentIds.has(message.id))];
+        });
       }
     });
     return () => {
@@ -197,32 +195,58 @@ export function AuthoringWorkbench({
   const [location, setLocation] = useState("authored");
   const [tools, setTools] = useState<ToolInfo[]>([]);
   const [preview, setPreview] = useState<PreviewMode>("split");
-  const [rightTab, setRightTab] = useState<"body" | "files" | "evaluate">(
+  const [rightTab, setRightTab] = useState<"body" | "files" | "evaluate" | "result">(
     "body",
   );
+  const [resultPreview, setResultPreview] = useState<{
+    messageId: string;
+    fileName: string;
+    kind: "body" | "attachment";
+    content: string;
+    pending: boolean;
+  } | null>(null);
   const [busy, setBusy] = useState(false);
   const [confirmExit, setConfirmExit] = useState(false);
   // 创作引导聊天消息（用户想法 + AI 状态回执）：状态上移，切换到访谈视图再切回也不丢失
   const [guideMessages, setGuideMessages] = useState<InterviewMessage[]>([]);
   const guideMsgSeq = useRef(0);
   const pushGuideMessage = useCallback(
-    (role: InterviewMessage["role"], content: string) => {
-      guideMsgSeq.current += 1;
-      setGuideMessages((list) => [...list, { id: `gm-${guideMsgSeq.current}`, role, content }]);
+    (
+      role: InterviewMessage["role"],
+      content: string,
+    options?: { id?: string; reasoning?: string; result?: AuthoringResultMeta },
+  ): string => {
+      const id = options?.id ?? `gm-${++guideMsgSeq.current}`;
+      const result = normalizeAuthoringResultMeta(options?.result);
+      setGuideMessages((list) => [
+        ...list,
+        {
+          id,
+          role,
+          content,
+          messageKind: getAuthoringMessageKind({ messageKind: undefined, result }),
+          reasoning: options?.reasoning,
+          result,
+        },
+      ]);
+      return id;
     },
     [],
   );
   const [editorOpen, setEditorOpen] = useState(true);
   // 编辑区全屏：覆盖层顶部保留完整工具栏（正文/附带资源 + 编辑/分栏/预览 + 还原）
   const [editorFull, setEditorFull] = useState(false);
-  // X4：AI 创作（顶栏按钮 + Dialog + 右侧流式预览）
+  // AI 创作：流式正文和确认操作直接显示在左侧创作对话中
   const [stream, setStream] = useState("");
+  const [streamKind, setStreamKind] = useState<"body" | "attachment" | "chat">("body");
+  const [streamFile, setStreamFile] = useState<string | null>(null);
   const [thinkStream, setThinkStream] = useState("");
+  const thinkStreamRef = useRef("");
   const [streaming, setStreaming] = useState(false);
-  // 右侧 pane 流式用途——create=一句话全文 / continue=续写正文（追加）
   // 用户「停止生成」的中止控制器：挂到 ref，供按钮 + 卸载时调用
   const aiAbortRef = useRef<AbortController | null>(null);
   const [streamDone, setStreamDone] = useState(false);
+  const [streamApplied, setStreamApplied] = useState<AuthoringResultAction | null>(null);
   // 引导式访谈状态（shark-skill-creator 对话式创建协议，动态 AI 驱动）
   const [interviewActive, setInterviewActive] = useState(false);
   const [interviewContext, setInterviewContext] = useState("");
@@ -245,9 +269,6 @@ export function AuthoringWorkbench({
   const [descOpen, setDescOpen] = useState(true);
   // R4：主行 DOM 节点——抽屉 Portal 锚定进主行（absolute），与 Markdown 区水平对齐
   const [rowEl, setRowEl] = useState<HTMLDivElement | null>(null);
-  // R6：#2 右侧 AI 流式预览滚动容器——流式期间追随输出到底部（同翻译功能）
-  const previewScrollRef = useRef<HTMLDivElement>(null);
-
   // Existing editor fields remain editable while the Creator state grows around
   // them. This preserves AI/interview/evaluation data across ordinary edits.
   useEffect(() => {
@@ -266,7 +287,7 @@ export function AuthoringWorkbench({
       void loadLLMConfig().catch(() => undefined);
     }
     if (current) {
-      // PLAN-11 阶段 0：存量 description 直接回显「我的描述」单输入，抽屉不空白
+      // 阶段 0：存量 description 直接回显「我的描述」单输入，抽屉不空白
       setDraftSilently((d) => ({
         ...d,
         name: current.name,
@@ -326,7 +347,7 @@ export function AuthoringWorkbench({
   // C5：标准附件不再携带模板占位内容——节点仅显示文件名，实际内容开始时才流式出现。
   const virtualFiles = useMemo(() => {
     const desc = buildDesc(draft) || draft.desc;
-    if (!draft.body.trim()) return [];
+    if (!draft.body.trim() && Object.keys(attContentsRef.current).length === 0) return [];
     const name = current?.name || draft.name.trim() || generateSkillName(desc);
     const fm = `name: ${name}\ndescription: ${desc || "TODO"}\nemoji: ${draft.emoji || "🧩"}`;
     const stdPaths = new Set<string>();
@@ -344,14 +365,42 @@ export function AuthoringWorkbench({
     ];
   }, [draft.body, draft.name, draft.desc, draft.purpose, draft.emoji, current?.name, attVersion]);
 
+  /** Build the complete SKILL.md document for a generated body preview. */
+  const buildSkillDocument = useCallback(
+    (content: string): string => {
+      const clean = sanitizeGeneratedText(content);
+      if (splitFrontmatter(clean)) return clean;
+      const desc = buildDesc(draft) || draft.desc || "TODO";
+      const name = current?.name || draft.name.trim() || generateSkillName(desc);
+      const fm = origFm.trim() || `name: ${name}\ndescription: ${desc}\nemoji: ${draft.emoji || "🧩"}`;
+      return `---\n${fm}\n---\n${clean}`;
+    },
+    [current?.name, draft, origFm],
+  );
 
-  // R6：#2 流式跟随滚动——每次内容落地把预览容器钉到底部（同翻译功能）；
-  // 流式结束后不再干预用户滚动。
-  useEffect(() => {
-    if (!streaming) return;
-    const el = previewScrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [stream, streaming]);
+  const selectRightTab = useCallback((tab: "body" | "files" | "evaluate" | "result") => {
+    setRightTab(tab);
+    if (tab !== "result") setResultPreview(null);
+  }, []);
+
+  const openResult = useCallback(
+    (messageId: string) => {
+      const message = guideMessages.find((item) => item.id === messageId);
+      const result = message?.result;
+      if (!message || !result) return;
+      const fileName = result.kind === "body" ? "SKILL.md" : result.fileRel || "附件文件";
+      setResultPreview({
+        messageId,
+        fileName,
+        kind: result.kind,
+        content: result.kind === "body" ? buildSkillDocument(message.content) : sanitizeGeneratedText(message.content),
+        pending: result.status !== "applied" && !result.applied,
+      });
+      setRightTab("result");
+    },
+    [buildSkillDocument, guideMessages],
+  );
+
 
   // 点击「停止生成」
   const handleStopAI = useCallback(() => {
@@ -362,11 +411,13 @@ export function AuthoringWorkbench({
   // 长正文流式时 react-markdown 每 delta 全量解析是真实卡顿源；
   // 附件流已有 50ms 节流（runAttachmentGeneration），这里覆盖正文流。
   const streamBufRef = useRef("");
+  const streamTextRef = useRef("");
   const streamRafRef = useRef<number | null>(null);
   const flushStreamRaf = useCallback(() => {
     streamRafRef.current = null;
     if (streamBufRef.current) {
-      setStream((s) => s + streamBufRef.current);
+      streamTextRef.current += streamBufRef.current;
+      setStream(streamTextRef.current);
       streamBufRef.current = "";
     }
   }, []);
@@ -386,7 +437,8 @@ export function AuthoringWorkbench({
       streamRafRef.current = null;
     }
     if (streamBufRef.current) {
-      setStream((s) => s + streamBufRef.current);
+      streamTextRef.current += streamBufRef.current;
+      setStream(streamTextRef.current);
       streamBufRef.current = "";
     }
   }, []);
@@ -399,15 +451,20 @@ export function AuthoringWorkbench({
     }
   }, []);
 
-  // 关闭右侧 AI 输出面板：彻底终止生成进程 + 清除流式状态
-  const handleCloseStreamPanel = useCallback(() => {
+  // 放弃当前生成结果：流式时中止请求，完成后移除待确认草稿
+  const handleDismissGeneration = useCallback(() => {
     // 若正在流式生成，先中止请求（防止后台继续消耗资源）
     aiAbortRef.current?.abort();
     aiAbortRef.current = null;
     resetStreamThrottle();
+    streamTextRef.current = "";
     setStreaming(false);
     setStream("");
+    setStreamKind("body");
+    setStreamFile(null);
     setStreamDone(false);
+    setStreamApplied(null);
+    thinkStreamRef.current = "";
     setThinkStream("");
   }, [resetStreamThrottle]);
 
@@ -429,7 +486,7 @@ export function AuthoringWorkbench({
     setReviewResult(null);
     setReviewStream("");
     // 审查可视化：切到附带资源页，打开并高亮 SKILL.md，流式内容实时展示
-    setRightTab("files");
+    selectRightTab("files");
     const controller = new AbortController();
     reviewAbortRef.current = controller;
     try {
@@ -447,7 +504,7 @@ export function AuthoringWorkbench({
       }
       setReviewResult(parsed);
       // 审查完成：切回评估页展示报告
-      setRightTab("evaluate");
+      selectRightTab("evaluate");
       // 持久化报告（一技能一报告）
       const meta: ReviewReportMeta = {
         skillName,
@@ -466,7 +523,7 @@ export function AuthoringWorkbench({
       setReviewLoading(false);
       reviewAbortRef.current = null;
     }
-  }, [reviewLoading, current?.name, draft.name, draft.desc, draft.purpose, draft.body, validation]);
+  }, [reviewLoading, current?.name, draft.name, draft.desc, draft.purpose, draft.body, validation, selectRightTab]);
 
   // 取消审查：立即终止 AI 请求
   const cancelReview = useCallback(() => {
@@ -501,6 +558,122 @@ export function AuthoringWorkbench({
     }
   }, [current?.skill_dir]);
 
+  const getKnownAttachmentPaths = (description: string): string[] => [
+    ...buildAttachmentFiles(
+      current?.name || draft.name.trim() || generateSkillName(description),
+      buildDesc(draft) || draft.desc || description,
+    ).map((file) => file.path),
+    ...attCandidates,
+    ...Object.keys(attContentsRef.current),
+  ];
+
+  /**
+   * 普通追问只属于聊天：它可以带 thinking，但绝不能被当作 SKILL.md
+   * 或附件候选，也不能改变编辑区内容。完成后把 thinking 一起固化到
+   * assistant_msg，下一轮开始时只清空临时流，不会影响历史消息。
+   */
+  const executeChatGeneration = async (input: string) => {
+    resetStreamThrottle();
+    streamTextRef.current = "";
+    setStreaming(true);
+    setStreamKind("chat");
+    setStreamFile(null);
+    setStreamDone(false);
+    setStreamApplied(null);
+    setStream("");
+    thinkStreamRef.current = "";
+    setThinkStream("");
+
+    const controller = new AbortController();
+    aiAbortRef.current = controller;
+    try {
+      const history = eventsToMessages(sessionEventsRef.current);
+      const messages =
+        history.at(-1)?.role === "user" && history.at(-1)?.content === input
+          ? history
+          : [...history, { role: "user" as const, content: input }];
+      const { text } = await chatAuthoringStream({
+        messages,
+        context: {
+          skillName: current?.name || draft.name.trim() || undefined,
+          skillDescription: buildDesc(draft) || draft.desc || undefined,
+          availableFiles: getKnownAttachmentPaths(input),
+        },
+        onDelta: pushStreamDelta,
+        onThinking: (delta) => {
+          thinkStreamRef.current += delta;
+          setThinkStream(thinkStreamRef.current);
+        },
+        abortSignal: controller.signal,
+      });
+
+      const reply = text.trim();
+      flushStreamNow();
+      if (reply) {
+        const reasoning = thinkStreamRef.current || undefined;
+        const replyId = pushGuideMessage("assistant", reply, {
+          reasoning,
+        });
+        // 历史消息已经接管展示，先清空临时流，再等待 session 落盘，
+        // 避免持久化等待期间同一份回答/thinking 出现两次。
+        setStream("");
+        setStreamDone(false);
+        setThinkStream("");
+        thinkStreamRef.current = "";
+        await recordSession({
+          kind: "assistant_msg",
+          content: reply,
+          extra: {
+            messageId: replyId,
+            ...(reasoning ? { reasoning } : {}),
+          },
+        }).catch(() => undefined);
+      }
+    } catch (e) {
+      if (e instanceof DOMException && e.name === "AbortError") {
+        const partial = `${streamTextRef.current}${streamBufRef.current}`.trim();
+        if (partial) {
+          const reasoning = thinkStreamRef.current || undefined;
+          const replyId = pushGuideMessage("assistant", partial, {
+            reasoning,
+          });
+          setStream("");
+          setStreamDone(false);
+          setThinkStream("");
+          thinkStreamRef.current = "";
+          await recordSession({
+            kind: "assistant_msg",
+            content: partial,
+            extra: {
+              messageId: replyId,
+              ...(reasoning ? { reasoning } : {}),
+            },
+          }).catch(() => undefined);
+        }
+        toast.info("已停止聊天生成，已保留已输出内容");
+      } else {
+        const msg = e instanceof Error ? e.message : String(e);
+        toast.error(msg);
+        const errorId = pushGuideMessage("system", `聊天失败：${msg}`);
+        await recordSession({
+          kind: "assistant_msg",
+          content: `聊天失败：${msg}`,
+          extra: { messageId: errorId },
+        }).catch(() => undefined);
+      }
+      setStream("");
+      setStreamDone(false);
+    } finally {
+      flushStreamNow();
+      setStreaming(false);
+      setStreamKind("body");
+      setStreamFile(null);
+      setThinkStream("");
+      thinkStreamRef.current = "";
+      if (aiAbortRef.current === controller) aiAbortRef.current = null;
+    }
+  };
+
   // 组件卸载时中止未完成的 AI 生成，避免请求泄漏
   useEffect(
     () => () => {
@@ -511,19 +684,58 @@ export function AuthoringWorkbench({
     []
   );
 
-  // PLAN-11 能力 2：续写正文——复用右侧 pane 流式预览；A 无正文生成全文 / B 有正文续写不覆盖
+  // 能力 2：正文生成——结果先回到创作对话，用户确认后再写入编辑区。
   // 增强：shark-skill-creator 对话式访谈协议——新建技能（无正文）时强制启动动态访谈引导，
   // AI 根据用户回答动态决定下一步问题，收集结构化信息后注入 AI Prompt。
   // overrideDesc：聊天发送时直接携带输入文本，避免与同批 patch(purpose) 的更新时序竞争。
-  const runContinue = async (skipInterview = false, overrideDesc?: string) => {
+  const runContinue = async (
+    skipInterview = false,
+    overrideDesc?: string,
+    userMessageId?: string,
+  ) => {
     if (streaming) return;
-    const desc = overrideDesc?.trim() || buildDesc(draft) || draft.desc;
-    if (!desc.trim()) {
+    const input = overrideDesc?.trim() || buildDesc(draft) || draft.desc;
+    if (!input.trim()) {
       toast.warning("先在创作引导输入框写下想法，再生成正文");
       return;
     }
+    const desc = input;
+    const knownAttachmentPaths = getKnownAttachmentPaths(desc);
+    const intent = detectAuthoringIntent(input, knownAttachmentPaths);
     // 会话回写：用户意图事件（创作引导聊天发送的消息在这里落盘）
-    recordSession({ kind: "user_msg", content: desc });
+    const messageId = userMessageId || pushGuideMessage("user", input);
+    await recordSession({
+      kind: "user_msg",
+      content: input,
+      extra: { messageId },
+    }).catch(() => undefined);
+
+    if (intent.kind === "attachment") {
+      await executeAttachmentGeneration(input, intent.fileRel);
+      return;
+    }
+    if (intent.kind === "attachment_needs_target") {
+      const suggestion = knownAttachmentPaths.slice(0, 5).join("、");
+      const content = suggestion
+        ? `请指定要修改的附件文件路径，例如 ${suggestion}。生成结果会先显示在对话中，确认后才写入文件。`
+        : "请指定要修改的附件文件路径，例如 assets/example-template.md。生成结果会先显示在对话中，确认后才写入文件。";
+      const replyId = pushGuideMessage("assistant", content);
+      await recordSession({
+        kind: "assistant_msg",
+        content,
+        extra: { messageId: replyId },
+      }).catch(() => undefined);
+      return;
+    }
+    if (intent.kind === "chat") {
+      // 新建技能的第一句话仍然进入访谈；已有技能的普通追问只走聊天。
+      if (!draft.body.trim() && !current && !skipInterview) {
+        setInterviewActive(true);
+        return;
+      }
+      await executeChatGeneration(input);
+      return;
+    }
     // 对话式访谈：新建技能（无正文）时强制触发动态访谈引擎
     if (!draft.body.trim() && !skipInterview) {
       setInterviewActive(true);
@@ -532,10 +744,24 @@ export function AuthoringWorkbench({
     await executeGeneration(desc);
   };
 
+  const restoreGuideMessagesFromSession = async () => {
+    // InterviewGuide writes its last answer/question through the same queue.
+    // Wait for that tail before switching back so the current view does not
+    // lose the interview transcript until the next session reload.
+    await sessionWriteQueueRef.current.catch(() => undefined);
+    const mapped = eventsToHistoryMessages(sessionEventsRef.current);
+    if (mapped.length === 0) return;
+    setGuideMessages((current) => {
+      const currentIds = new Set(current.map((message) => message.id));
+      return [...mapped, ...current.filter((message) => !currentIds.has(message.id))];
+    });
+  };
+
   // 访谈完成回调：接收结构化上下文 + 自动生成 name/emoji，然后执行生成
   const handleInterviewComplete = (structuredContext: string) => {
     setInterviewContext(structuredContext);
     setInterviewActive(false);
+    setStreaming(true);
     // 自动生成 Skill 名称 + 随机 Emoji（无需用户手动填写）
     const desc = buildDesc(draft) || draft.desc;
     if (!current && !draft.name.trim()) {
@@ -543,20 +769,25 @@ export function AuthoringWorkbench({
       const autoEmoji = COMMON_EMOJI[Math.floor(Math.random() * COMMON_EMOJI.length)];
       patch({ name: autoName, emoji: autoEmoji });
     }
-    void executeGeneration(desc);
+    void restoreGuideMessagesFromSession().then(() => {
+      void executeGeneration(desc, structuredContext);
+    });
   };
 
   // 访谈跳过回调：自动生成 name/emoji 后直接进入生成
   const handleInterviewSkip = () => {
     setInterviewActive(false);
     setInterviewContext("");
+    setStreaming(true);
     const desc = buildDesc(draft) || draft.desc;
     if (!current && !draft.name.trim()) {
       const autoName = generateSkillName(desc);
       const autoEmoji = COMMON_EMOJI[Math.floor(Math.random() * COMMON_EMOJI.length)];
       patch({ name: autoName, emoji: autoEmoji });
     }
-    void executeGeneration(desc);
+    void restoreGuideMessagesFromSession().then(() => {
+      void executeGeneration(desc);
+    });
   };
 
   // B3：打开附件提案（初稿落地后）——合并正文引用与标准结构附件清单
@@ -573,29 +804,34 @@ export function AuthoringWorkbench({
     setAttOpen(true);
   };
 
-  // B3：逐个流式生成已选附件内容（保存时一并写盘；本次不落盘不阻塞）
-  // T2：自动跳文件区 + 收起创作引导 + 逐文件流式直播（50ms 节流刷新文件树）
+  // B3：逐个流式生成已选附件内容。
+  // 生成结果先作为聊天中的 attachment_candidate，用户点击「写入文件」后
+  // 才进入编辑状态；生成过程中不切换右侧文件区，也不提前修改虚拟文件树。
   const runAttachmentGeneration = async () => {
     const desc = buildDesc(draft) || draft.desc;
     const name = current?.name || draft.name.trim() || generateSkillName(desc);
     const list = attCandidates.filter((p) => attSelected.has(p));
-    // 自动聚焦：关闭提案对话框、收起创作引导、切换到附带资源页
+    if (list.length === 0) return;
+
+    // 关闭提案对话框，但保留创作引导，让每个候选都回到当前聊天流。
     setAttOpen(false);
-    setDescOpen(false);
-    setRightTab("files");
-    // C3：可中断——附件批量生成支持随时停止
     const controller = new AbortController();
     attAbortRef.current = controller;
+    aiAbortRef.current = controller;
     let done = 0;
-    let lastTick = 0;
     for (const path of list) {
+      resetStreamThrottle();
+      streamTextRef.current = "";
+      setStream("");
+      setStreamKind("attachment");
+      setStreamFile(path);
+      setStreamDone(false);
+      setStreamApplied(null);
+      thinkStreamRef.current = "";
+      setThinkStream("");
+      setStreaming(true);
       setAttBusy(path);
       setAttProgress({ i: done, total: list.length });
-      // 立即占位进虚拟树：节点在生成开始秒出现 → autoOpenPath 聚焦/流式无缝衔接
-      if (!(path in attContentsRef.current)) {
-        attContentsRef.current[path] = "";
-        setAttVersion((v) => v + 1);
-      }
       try {
         const r = await generateAttachmentDraftStream(
           {
@@ -605,31 +841,83 @@ export function AuthoringWorkbench({
             skillBody: draft.body,
             sessionMessages: eventsToMessages(sessionEventsRef.current),
           },
-          (d) => {
-            attContentsRef.current[path] = (attContentsRef.current[path] ?? "") + d;
-            const now = Date.now();
-            if (now - lastTick > 50) {
-              lastTick = now;
-              setAttVersion((v) => v + 1);
-            }
-          },
+          pushStreamDelta,
           controller.signal,
         );
-        attContentsRef.current[path] = r.text;
-        setAttVersion((v) => v + 1);
-        recordSession({ kind: "attachment_result", content: r.text, extra: { file: path } });
+        const cleanText = sanitizeGeneratedText(r.text);
+        flushStreamNow();
+        setStream(cleanText);
+        setStreamDone(Boolean(cleanText.trim()));
+        if (cleanText.trim()) {
+          const reasoning = thinkStreamRef.current || undefined;
+          const resultId = pushGuideMessage("assistant", cleanText, {
+            reasoning,
+            result: { kind: "attachment", fileRel: path },
+          });
+          const extra: Record<string, string> = {
+            messageId: resultId,
+            file: path,
+          };
+          if (reasoning) extra.reasoning = reasoning;
+          // 历史文件卡片已经接管展示，先清空临时流，再等待 session 落盘。
+          setStream("");
+          setStreamDone(false);
+          setThinkStream("");
+          thinkStreamRef.current = "";
+          setStreamFile(null);
+          setStreamApplied(null);
+          await recordSession({
+            kind: "attachment_result",
+            content: cleanText,
+            extra,
+          }).catch(() => undefined);
+        } else {
+          // 没有可归档的回答时，也不能把孤立的 thinking 留作下一轮临时流。
+          setStream("");
+          setStreamDone(false);
+          setThinkStream("");
+          thinkStreamRef.current = "";
+          setStreamFile(null);
+          setStreamApplied(null);
+        }
         done += 1;
         setAttProgress({ i: done, total: list.length });
       } catch (e) {
         if (e instanceof DOMException && e.name === "AbortError") {
-          toast.info("已停止附件生成——已生成的文件保留");
+          flushStreamNow();
+          const partial = sanitizeGeneratedText(`${streamTextRef.current}${streamBufRef.current}`);
+          if (partial.trim()) {
+            const resultId = pushGuideMessage("assistant", partial, {
+              reasoning: thinkStreamRef.current || undefined,
+              result: { kind: "attachment", fileRel: path },
+            });
+            await recordSession({
+              kind: "attachment_result",
+              content: partial,
+              extra: {
+                messageId: resultId,
+                file: path,
+                ...(thinkStreamRef.current ? { reasoning: thinkStreamRef.current } : {}),
+              },
+            }).catch(() => undefined);
+          }
+          toast.info("已停止附件生成，已生成内容保留在聊天中");
           break;
         }
         toast.error(`附件 ${path} 生成失败，已跳过`);
         done += 1;
       }
     }
+    resetStreamThrottle();
+    setStream("");
+    setStreamDone(false);
+    setStreamKind("body");
+    setStreamFile(null);
+    setThinkStream("");
+    thinkStreamRef.current = "";
+    setStreaming(false);
     attAbortRef.current = null;
+    if (aiAbortRef.current === controller) aiAbortRef.current = null;
     setAttBusy(null);
     setAttProgress(null);
     if (done > 0) {
@@ -643,11 +931,16 @@ export function AuthoringWorkbench({
   };
 
   // 实际执行 AI 生成（从 runContinue 拆出，供访谈完成后调用）
-  const executeGeneration = async (desc: string) => {
+  const executeGeneration = async (desc: string, contextOverride?: string) => {
     resetStreamThrottle();
+    streamTextRef.current = "";
     setStreaming(true);
+    setStreamKind("body");
+    setStreamFile(null);
     setStreamDone(false);
+    setStreamApplied(null);
     setStream("");
+    thinkStreamRef.current = "";
     setThinkStream("");
     const controller = new AbortController();
     aiAbortRef.current = controller;
@@ -657,29 +950,50 @@ export function AuthoringWorkbench({
         draft.body,
         pushStreamDelta,
         controller.signal,
-        interviewContext || undefined,
-        (d) => setThinkStream((s) => s + d),
+        (contextOverride ?? interviewContext) || undefined,
+        (d) => {
+          thinkStreamRef.current += d;
+          setThinkStream(thinkStreamRef.current);
+        },
         eventsToMessages(sessionEventsRef.current),
       );
+      const cleanText = sanitizeGeneratedText(text);
       if (finishReason === "length") {
         toast.warning("模型输出被截断——可应用后再续写");
-        pushGuideMessage("system", "输出被截断，可点击右侧「追加到正文」保留已生成部分后再续写");
-      } else if (!draft.body.trim() && text.trim()) {
-        // 初稿是主路径：正文为空时，正常完成的结果直接落地到编辑器。
-        // 中止或截断仍保留在辅助预览中，避免半成品静默覆盖草稿。
-        resetStreamThrottle();
-        patch({ body: text });
+      } else {
+        toast.success("生成完成，请在对话中确认如何处理");
+      }
+      resetStreamThrottle();
+      setStream(cleanText);
+      setStreamDone(Boolean(cleanText.trim()));
+      if (cleanText.trim()) {
+        const bodyEmptyAtStart = !draft.body.trim();
+        const reasoning = thinkStreamRef.current || undefined;
+        const resultId = pushGuideMessage("assistant", cleanText, {
+          reasoning,
+          result: { kind: "body", bodyEmpty: bodyEmptyAtStart },
+        });
+        const extra: Record<string, string> = {
+          messageId: resultId,
+          bodyEmpty: String(bodyEmptyAtStart),
+        };
+        if (reasoning) extra.reasoning = reasoning;
+        // 历史文件卡片已经接管展示，先清空临时流，再等待 session 落盘。
         setStream("");
         setStreamDone(false);
-        setRightTab("body");
-        setPreview("split");
-        toast.success("初稿已生成，可以继续修改");
-        pushGuideMessage("assistant", "初稿已生成，已写入编辑区正文，可继续修改或补充想法。");
-        recordSession({ kind: "generation_result", content: text });
-        // C6：AI 标题总结——新建态让 AI 根据内容起名（覆盖 skills-skills 之类空泛名）
+        setThinkStream("");
+        thinkStreamRef.current = "";
+        setStreamFile(null);
+        setStreamApplied(null);
+          await recordSession({
+            kind: "generation_result",
+            content: cleanText,
+            extra,
+          }).catch(() => undefined);
+        // C6：AI 标题总结——新建态仍可预先生成技能名，但不会自动写正文。
         if (!current) {
           void (async () => {
-            const aiName = await summarizeSkillTitle(desc, text).catch(() => "");
+            const aiName = await summarizeSkillTitle(desc, cleanText).catch(() => "");
             if (aiName && NAME_RE.test(aiName)) {
               patch({ name: aiName });
             } else if (!draft.name.trim() || !NAME_RE.test(draft.name)) {
@@ -687,18 +1001,20 @@ export function AuthoringWorkbench({
             }
           })();
         }
-        // B3：弹附件提案（基于新正文的引用 + 标准结构清单）
-        openAttachmentProposal(text, desc);
       } else {
-        setStreamDone(true);
-        pushGuideMessage("assistant", "补充内容已生成，可在右侧预览确认后「追加到正文」。");
-        recordSession({ kind: "generation_result", content: text });
+        // 没有可归档的回答时，也不能把孤立的 thinking 留作下一轮临时流。
+        setStream("");
+        setStreamDone(false);
+        setThinkStream("");
+        thinkStreamRef.current = "";
+        setStreamFile(null);
+        setStreamApplied(null);
       }
     } catch (e) {
       if (e instanceof DOMException && e.name === "AbortError") {
-        toast.info("已停止续写——已生成部分保留在预览中");
+        toast.info("已停止生成——已生成部分保留在对话中");
         setStreamDone(true);
-        pushGuideMessage("system", "已停止生成，已生成部分保留在右侧预览中");
+        pushGuideMessage("system", "已停止生成，已生成部分保留在对话中，可确认后写入正文。");
       } else {
         const msg = e instanceof Error ? e.message : String(e);
         toast.error(msg);
@@ -712,22 +1028,130 @@ export function AuthoringWorkbench({
     }
   };
 
-  // PLAN-11 能力 2：应用续写——情况 A 填入 / 情况 B 追加（绝不覆盖原正文）
-  const applyContinue = () => {
-    const add = stream.trim();
+  /** 从现有编辑快照、虚拟附件或磁盘读取目标文件，供附件改写使用。 */
+  const readAttachmentDraft = async (fileRel: string): Promise<string> => {
+    if (Object.prototype.hasOwnProperty.call(editedFilesRef.current, fileRel)) {
+      return editedFilesRef.current[fileRel];
+    }
+    if (Object.prototype.hasOwnProperty.call(attContentsRef.current, fileRel) && attContentsRef.current[fileRel].trim()) {
+      return attContentsRef.current[fileRel];
+    }
+    if (current) {
+      try {
+        return await readSkillFile(`${current.skill_dir}/${fileRel}`);
+      } catch {
+        // A new resource may not exist on disk yet.
+      }
+    }
+    return attContentsRef.current[fileRel] ?? "";
+  };
+
+  /** 左侧对话中的附件生成：生成结果先进入会话，确认后才更新附件编辑内容。 */
+  const executeAttachmentGeneration = async (idea: string, fileRel: string) => {
+    const desc = buildDesc(draft) || draft.desc || idea;
+    const name = current?.name || draft.name.trim() || generateSkillName(desc);
+    resetStreamThrottle();
+    streamTextRef.current = "";
+    setStreaming(true);
+    setStreamKind("attachment");
+    setStreamFile(fileRel);
+    setStreamDone(false);
+    setStreamApplied(null);
+    setStream("");
+    thinkStreamRef.current = "";
+    setThinkStream("");
+    const controller = new AbortController();
+    aiAbortRef.current = controller;
+    try {
+      const currentFileContent = await readAttachmentDraft(fileRel);
+      const { finishReason, text } = await generateFileAssistStream(
+        {
+          idea,
+          fileRel,
+          skillName: name,
+          skillDescription: desc,
+          skillBody: draft.body,
+          currentFileContent,
+          sessionMessages: eventsToMessages(sessionEventsRef.current),
+          onThinking: (delta) => {
+            thinkStreamRef.current += delta;
+            setThinkStream(thinkStreamRef.current);
+          },
+        },
+        pushStreamDelta,
+        controller.signal,
+      );
+      const cleanText = sanitizeGeneratedText(text);
+      if (finishReason === "length") toast.warning("附件输出被截断——可确认部分内容后继续修改");
+      else toast.success("附件生成完成，请在对话中确认是否写入");
+      resetStreamThrottle();
+      setStream(cleanText);
+      setStreamDone(Boolean(cleanText.trim()));
+      if (cleanText.trim()) {
+        const reasoning = thinkStreamRef.current || undefined;
+        const resultId = pushGuideMessage("assistant", cleanText, {
+          reasoning,
+          result: { kind: "attachment", fileRel },
+        });
+        const extra: Record<string, string> = { messageId: resultId, file: fileRel };
+        if (reasoning) extra.reasoning = reasoning;
+        // 历史文件卡片已经接管展示，先清空临时流，再等待 session 落盘。
+        setStream("");
+        setStreamDone(false);
+        setThinkStream("");
+        thinkStreamRef.current = "";
+        setStreamFile(null);
+        setStreamApplied(null);
+        await recordSession({
+          kind: "attachment_result",
+          content: cleanText,
+          extra,
+        }).catch(() => undefined);
+      } else {
+        // 没有可归档的回答时，也不能把孤立的 thinking 留作下一轮临时流。
+        setStream("");
+        setStreamDone(false);
+        setThinkStream("");
+        thinkStreamRef.current = "";
+        setStreamFile(null);
+        setStreamApplied(null);
+      }
+    } catch (e) {
+      if (e instanceof DOMException && e.name === "AbortError") {
+        toast.info("已停止附件生成——已生成部分保留在对话中");
+        setStreamDone(true);
+      } else {
+        const msg = e instanceof Error ? e.message : String(e);
+        toast.error(msg);
+        pushGuideMessage("system", `附件生成失败：${msg}`);
+      }
+    } finally {
+      flushStreamNow();
+      setStreaming(false);
+      aiAbortRef.current = null;
+    }
+  };
+
+  // 应用对话中的待确认结果：追加或重写由用户明确选择，默认不覆盖原正文。
+  const applyContinue = (mode: "append" | "replace") => {
+    const add = sanitizeGeneratedText(stream);
     if (!add) {
       toast.error("续写结果为空——请重试");
       return;
     }
-    if (draft.body.trim()) {
-      patch({ body: `${draft.body.replace(/\s+$/, "")}\n\n${add}` });
-      toast.success("已追加续写内容（原正文保留）");
-    } else {
-      patch({ body: add });
-      toast.success("已填入正文");
-    }
+    const bodyWasEmpty = !draft.body.trim();
+    const resultId = pushGuideMessage("assistant", add, {
+      result: { kind: "body", bodyEmpty: bodyWasEmpty },
+    });
+    void recordSession({
+      kind: "generation_result",
+      content: add,
+      extra: { messageId: resultId, bodyEmpty: String(bodyWasEmpty) },
+    });
+    applyBodyResult(resultId, add, mode, bodyWasEmpty);
     setStream("");
     setStreamDone(false);
+    setStreamApplied(bodyWasEmpty ? "use" : mode);
   };
 
   // 真实修改统一入口：经草稿 Hook 标脏 + 落盘；附业务副作用（校验失效）
@@ -740,6 +1164,86 @@ export function AuthoringWorkbench({
     [draftApi],
   );
 
+  const setGuideResultAction = (messageId: string, action: AuthoringResultAction) => {
+    setGuideMessages((list) =>
+      list.map((message) =>
+        message.id === messageId && message.result
+          ? {
+              ...message,
+              result: { ...message.result, applied: action, status: "applied" },
+            }
+          : message,
+      ),
+    );
+    setResultPreview((preview) =>
+      preview?.messageId === messageId ? { ...preview, pending: false } : preview,
+    );
+  };
+
+  const recordGuideResultAction = (messageId: string, action: AuthoringResultAction) => {
+    void recordSession({
+      kind: "result_applied",
+      content: "",
+      extra: { messageId, action },
+    });
+  };
+
+  const applyBodyResult = (
+    messageId: string,
+    content: string,
+    mode: "append" | "replace",
+    bodyEmptyAtGeneration?: boolean,
+  ) => {
+    const add = sanitizeGeneratedText(content);
+    if (!add) {
+      toast.error("生成结果为空——请重试");
+      return;
+    }
+    const bodyWasEmptyAtStart = bodyEmptyAtGeneration ?? !draft.body.trim();
+    const bodyIsEmptyNow = !draft.body.trim();
+    if (mode === "append" && !bodyIsEmptyNow) {
+      patch({ body: `${draft.body.replace(/\s+$/, "")}\n\n${add}` });
+      toast.success("已追加续写内容（原正文保留）");
+    } else {
+      patch({ body: add });
+      toast.success(bodyIsEmptyNow ? "已填入正文" : "已重写正文");
+    }
+    setGuideResultAction(messageId, bodyIsEmptyNow ? "use" : mode);
+    if (messageId !== "stream") {
+      recordGuideResultAction(messageId, bodyIsEmptyNow ? "use" : mode);
+    }
+    // 初稿只有在用户确认写入后才生成附件提案，避免未确认的结果触发资源流程。
+    if (bodyWasEmptyAtStart) openAttachmentProposal(add, buildDesc(draft) || draft.desc);
+  };
+
+  const writeAttachmentResult = (messageId: string) => {
+    const message = guideMessages.find((item) => item.id === messageId);
+    const fileRel = message?.result?.kind === "attachment" ? message.result.fileRel : undefined;
+    const content = message ? sanitizeGeneratedText(message.content) : "";
+    if (!fileRel || !content) {
+      toast.error("附件结果为空，无法写入");
+      return;
+    }
+    attContentsRef.current[fileRel] = content;
+    if (current) editedFilesRef.current[fileRel] = content;
+    setAttVersion((version) => version + 1);
+    setGuideResultAction(messageId, "write");
+    recordGuideResultAction(messageId, "write");
+    selectRightTab("files");
+    toast.success(`已写入 ${fileRel} 的编辑内容，点击右上角保存落盘`);
+  };
+
+  const dismissGuideResult = (messageId: string) => {
+    setGuideMessages((list) => list.filter((message) => message.id !== messageId));
+    setResultPreview(null);
+    selectRightTab("body");
+    void recordSession({
+      kind: "result_dismissed",
+      content: "",
+      extra: { messageId },
+    });
+  };
+
   // 一键修复：调用 AI 按审查问题自动修正正文 + 自动创建缺失附件（必须在 patch 声明之后，避免 TDZ）
   // 闭环：未保存时自动保存（生成名称+随机emoji）→ 修复正文 → 创建缺失文件 → 展示文件清单
   const runSkillFix = useCallback(async () => {
@@ -750,7 +1254,7 @@ export function AuthoringWorkbench({
     setFixing(true);
     setFixStream("");
     // 修复可视化：切到附带资源页，打开并高亮 SKILL.md，流式内容实时展示
-    setRightTab("files");
+    selectRightTab("files");
     const controller = new AbortController();
     fixAbortRef.current = controller;
     try {
@@ -855,18 +1359,18 @@ export function AuthoringWorkbench({
       setFixing(false);
       fixAbortRef.current = null;
     }
-  }, [fixing, reviewResult, current, draft.name, draft.desc, draft.purpose, draft.body, draft.emoji, draft.scaffold, reportMeta, patch, location, refresh]);
+  }, [fixing, reviewResult, current, draft.name, draft.desc, draft.purpose, draft.body, draft.emoji, draft.scaffold, reportMeta, patch, location, refresh, selectRightTab]);
 
-  // PLAN-11 3.6：FileTree「插入引用」回调——引用行追加到正文末尾，切回正文 tab 便于查看
+  // 3.6：FileTree「插入引用」回调——引用行追加到正文末尾，切回正文 tab 便于查看
   const insertRefLine = useCallback(
     (line: string) => {
       const b = draft.body.replace(/\s+$/, "");
       patch({ body: b ? `${b}\n\n${line}\n` : `${line}\n` });
-      setRightTab("body");
+      selectRightTab("body");
       setPreview((p) => (p === "edit" ? "split" : p));
       toast.success("已插入引用到正文");
     },
-    [draft.body, patch],
+    [draft.body, patch, selectRightTab],
   );
 
   // Ctrl+S（仅 mount 期间）
@@ -904,7 +1408,7 @@ export function AuthoringWorkbench({
   const save = useCallback(async () => {
     if (busy) return;
     setBusy(true);
-    // PLAN-11 阶段 0：description 即「我的描述」(purpose)，兜底存量 desc
+    // 阶段 0：description 即「我的描述」(purpose)，兜底存量 desc
     const desc = buildDesc(draft) || draft.desc;
     try {
       if (!current) {
@@ -979,8 +1483,8 @@ export function AuthoringWorkbench({
           draftApi.dismissStored();
           // T3：会话归属迁移——草稿键（new）→ 技能 id 键，下次编辑同技能恢复同一会话
           if (sessionIdRef.current) {
-            rememberSessionId(found.id, sessionIdRef.current);
-            forgetSessionId("new");
+            await rememberSessionId(found.id, sessionIdRef.current);
+            await forgetSessionId("new");
           }
           setOrigFm(
             `name: ${found.name}\ndescription: ${found.description}\nemoji: ${found.emoji ?? "🧩"}`,
@@ -1033,7 +1537,7 @@ export function AuthoringWorkbench({
     saveRef.current = () => void save();
   }, [save]);
 
-  const handleBack = () => {
+  const handleBack = async () => {
     // 真实修改 或 新建态已发生对话/生成 → 弹确认框（保存 or 主动放弃）
     const hasSessionActivity = sessionEventsRef.current.some(
       (e) => e.kind !== "session_created",
@@ -1043,11 +1547,11 @@ export function AuthoringWorkbench({
       return;
     }
     // 新建且全无实际内容：静默退出，同时清理自动创建的会话残留（下次新建干净空态）
-    const sid = sessionIdRef.current ?? recallSessionId(draftId);
+    const sid = sessionIdRef.current ?? (await recallSessionId(draftId));
     if (!current) {
       draftApi.clearAll();
       if (sid) {
-        forgetSessionId(draftId);
+        await forgetSessionId(draftId);
         void sessionDelete(sid);
       }
     }
@@ -1059,11 +1563,11 @@ export function AuthoringWorkbench({
    * 下次新建呈现干净空态。磁盘技能文件（若已保存）不受影响；
    * 新建立即放弃则彻底清空一切。兜底恢复仅保留给非正常结束（崩溃/强关）。
    */
-  const exitWithoutSaving = useCallback(() => {
-    const sid = sessionIdRef.current ?? recallSessionId(draftId);
+  const exitWithoutSaving = useCallback(async () => {
+    const sid = sessionIdRef.current ?? (await recallSessionId(draftId));
     draftApi.clearAll();
     if (sid) {
-      forgetSessionId(draftId);
+      await forgetSessionId(draftId);
       void sessionDelete(sid);
     }
     setConfirmExit(false);
@@ -1105,15 +1609,15 @@ export function AuthoringWorkbench({
       // 脏状态修复：阶段切换（含进入「检查 Skill」只读查看）是导航 + 状态机推进，
       // 不是内容修改——不标脏，避免无任何编辑却提示「有未保存的内容」。
       if (stage === CreationStage.Evaluate) {
-        setRightTab("evaluate");
+        selectRightTab("evaluate");
         // 只加载已持久化报告；审查由用户点「开始审查」主动触发（不再自动触发）
         void loadPersistedReport();
       }
       if (stage === CreationStage.Generate || stage === CreationStage.Package) {
-        setRightTab("body");
+        selectRightTab("body");
       }
     },
-    [draftApi, loadPersistedReport],
+    [draftApi, loadPersistedReport, selectRightTab],
   );
 
   // 编辑区工具条（normal / fullscreen 共用；full 时把「全屏」换成「还原」）
@@ -1124,7 +1628,7 @@ export function AuthoringWorkbench({
           variant={rightTab === "body" ? "secondary" : "ghost"}
           size="sm"
           className="h-7 px-2.5 text-xs"
-          onClick={() => setRightTab("body")}
+          onClick={() => selectRightTab("body")}
         >
           正文
         </Button>
@@ -1132,12 +1636,17 @@ export function AuthoringWorkbench({
           variant={rightTab === "files" ? "secondary" : "ghost"}
           size="sm"
           className="h-7 px-2.5 text-xs"
-          onClick={() => setRightTab("files")}
+          onClick={() => selectRightTab("files")}
         >
           <FolderTree className="h-3 w-3" />
           附带资源
         </Button>
       </div>
+      {rightTab === "result" && resultPreview && (
+        <span className="min-w-0 truncate px-1 text-[11px] text-text-tertiary">
+          文件预览 · {resultPreview.fileName}
+        </span>
+      )}
       {rightTab === "body" && (
         <div className="flex items-center gap-0.5 rounded-md border border-border/60 bg-glass-1 p-0.5">
           <Button
@@ -1210,7 +1719,15 @@ export function AuthoringWorkbench({
 
   // 编辑区内容（正文/附带资源），与工具条解耦，供普通态与全屏复用
   const editorBody =
-    rightTab === "evaluate" ? (
+    rightTab === "result" && resultPreview ? (
+      <FileArtifactPreview
+        fileName={resultPreview.fileName}
+        kind={resultPreview.kind}
+        content={resultPreview.content}
+        pending={resultPreview.pending}
+        onClose={() => selectRightTab("body")}
+      />
+    ) : rightTab === "evaluate" ? (
       <div className="min-h-0 flex-1 overflow-y-auto">
         {showReviewBrief ? (
           /* 无报告：审查须知卡（图形化说明 + 唯一 CTA，绝不自动触发） */
@@ -1296,7 +1813,7 @@ export function AuthoringWorkbench({
               <span className="font-mono text-text-primary">{attBusy}</span>
             </span>
             <span className="flex-1" />
-            <span className="font-mono text-[10px] text-text-tertiary">内容实时写入下方文件树</span>
+            <span className="font-mono text-[10px] text-text-tertiary">生成结果会回到左侧对话，确认后再写入</span>
             {/* C3：用户可随时打断附件生成 */}
             <Button
               variant="outline"
@@ -1315,7 +1832,7 @@ export function AuthoringWorkbench({
             skill={current}
             onInsertReference={insertRefLine}
             virtualFiles={virtualFiles}
-            autoOpenPath={attBusy ?? (inspectActive ? "SKILL.md" : null)}
+            autoOpenPath={inspectActive ? "SKILL.md" : null}
             highlightPath={inspectActive ? "SKILL.md" : null}
             onFileContentChange={(rel, content) => {
               // 无局部保存按钮：编辑内容统一由右上角「保存」落盘
@@ -1392,7 +1909,7 @@ export function AuthoringWorkbench({
       )}
 
       {/* 主体 R3：编辑列常显；左「创作引导」（聊天态 / 访谈态）进 Sheet 抽屉（R3-1）；
-          AI 流式进右侧辅助 pane（R3-3，不挤压编辑器）；全内部滚动（R3-2）。
+          AI 流式结果回到对话消息（R3-3），确认后再更新编辑器；全内部滚动（R3-2）。
           抽屉展开时主行 padding-left 推让 400px + 16px 间隙。 */}
       <div
         ref={(n) => {
@@ -1411,19 +1928,6 @@ export function AuthoringWorkbench({
         </div>
         )}
 
-        {/* 右侧辅助 pane（R3-3 并列不挤压；R3-2 内部滚动，页面不滚）：仅承载 AI 流式输出 */}
-        {(streaming || streamDone) && (
-          <StreamPane
-            streaming={streaming}
-            streamDone={streamDone}
-            stream={stream}
-            thinkStream={thinkStream}
-            editorOpen={editorOpen}
-            onStop={handleStopAI}
-            onApply={applyContinue}
-            onClose={handleCloseStreamPanel}
-          />
-        )}
       </div>
 
       {/* R5 左侧推拉抽屉：Portal 锚定主行内 absolute——四角圆；
@@ -1453,7 +1957,11 @@ export function AuthoringWorkbench({
                 onSkip={handleInterviewSkip}
                 busy={streaming}
                 onRecord={recordSession}
-                initialMessages={guideMessages}
+                // 访谈只重放聊天消息；正文/附件候选是文件产物，不能反向
+                // 注入访谈上下文，否则下一次生成会把候选正文当用户需求。
+                initialMessages={guideMessages.filter(
+                  (message) => message.messageKind === "chat" && !message.result,
+                )}
               />
             ) : (
               <CreationGuidePanel
@@ -1461,10 +1969,47 @@ export function AuthoringWorkbench({
                 bodyEmpty={!draft.body.trim()}
                 busy={streaming}
                 messages={guideMessages}
-                onDescriptionChange={(value) => patch({ purpose: value })}
+                stream={stream}
+                streamKind={streamKind}
+                streamFile={streamFile}
+                thinkStream={thinkStream}
+                streamDone={streamDone}
+                streamApplied={streamApplied}
+                onStop={handleStopAI}
+                onApply={applyContinue}
+                onWriteAttachment={() => {
+                  const content = sanitizeGeneratedText(stream);
+                  if (!streamFile || !content) {
+                    toast.error("附件结果为空，无法写入");
+                    return;
+                  }
+                  attContentsRef.current[streamFile] = content;
+                  if (current) editedFilesRef.current[streamFile] = content;
+                  setAttVersion((version) => version + 1);
+                  setStream("");
+                  setStreamDone(false);
+                  setStreamFile(null);
+                  toast.success(`已写入 ${streamFile} 的编辑内容，点击右上角保存落盘`);
+                }}
+                onDismiss={handleDismissGeneration}
+                onApplyResult={(messageId, mode) => {
+                  const result = guideMessages.find((message) => message.id === messageId)?.result;
+                  applyBodyResult(messageId, guideMessages.find((message) => message.id === messageId)?.content ?? "", mode, result?.bodyEmpty);
+                }}
+                onWriteResult={writeAttachmentResult}
+                onDismissResult={dismissGuideResult}
+                onOpenResult={openResult}
                 onSend={(text) => {
-                  pushGuideMessage("user", text);
-                  void runContinue(false, text);
+                  const knownPaths = getKnownAttachmentPaths(text);
+                  const intent = detectAuthoringIntent(text, knownPaths);
+                  // 新建技能首条描述作为 purpose 保存；后续聊天内容不能污染正文或描述。
+                  if (!current && !draft.body.trim() && !draft.purpose.trim()) {
+                    patch({ purpose: text });
+                  } else if (intent.kind === "body" && !draft.body.trim()) {
+                    patch({ purpose: text });
+                  }
+                  const messageId = pushGuideMessage("user", text);
+                  void runContinue(false, text, messageId);
                 }}
               />
             )}

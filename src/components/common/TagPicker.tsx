@@ -1,5 +1,5 @@
 /**
- * PLAN-13 工作流 T：标签选择器（Popover）。
+ * 工作流 T：标签选择器（Popover）。
  * 清单勾选 + 「新建标签…」行内输入（回车创建并立即挂上）。
  * 技能库详情与 Hub 复用同一组件（objectKey 复合键区分对象类型）。
  */
@@ -180,7 +180,7 @@ export function TagChipsRow({
 }
 
 /**
- * PLAN-14 批量打标选择器（Popover）。
+ * 批量打标选择器（Popover）。
  * 与单对象 TagPicker 的区别：点击标签只收集到本地 picked 集合，
  * 点「确定」才经 onApply 交给调用方批量执行（D4：添加=并集 / 清除=摘除）。
  * 单对象模式（TagPicker）不受影响。

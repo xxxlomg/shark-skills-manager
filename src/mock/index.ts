@@ -1,5 +1,5 @@
 /**
- * Mock 数据统一出口（PLAN-06 约定：前端所有 mock 数据只存在于本文件夹）。
+ * Mock 数据统一出口（约定：前端所有 mock 数据只存在于本文件夹）。
  *
  * - mode.ts         开关（?mock=1）
  * - skills.ts       技能列表（MOCK_SKILLS）
@@ -10,9 +10,9 @@
  * - shelf.ts        模块 A 货架浏览样本（MOCK_SHELF）
  * - validation.ts   C3 校验矩阵样本（mockValidationReport）
  * - files.ts        W4 附带资源文件树（内存态）
- * - tags.ts         PLAN-13 T 标签数据（MOCK_TAGS）
- * - summaries.ts    PLAN-13 S 用途速览（MOCK_SUMMARIES）
- * - dupdemo.ts      PLAN-13 M 阶段 2 查重演示（MOCK_DUP_GROUPS + dupDemoFile）
+ * - tags.ts         T 标签数据（MOCK_TAGS）
+ * - summaries.ts    S 用途速览（MOCK_SUMMARIES）
+ * - dupdemo.ts      M 阶段 2 查重演示（MOCK_DUP_GROUPS + dupDemoFile）
  * - creator.ts      内置 shark-skill-creator 定义样本（MOCK_CREATOR_INFO + MOCK_CREATOR_DOCS）
  *
  * 新增 mock 数据一律落本文件夹，禁止散落在组件或 hooks 里。

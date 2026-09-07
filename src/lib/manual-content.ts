@@ -1,5 +1,5 @@
 /**
- * 手册内容装配（PLAN-10 P1）：章节 markdown 以 ?raw 导入，
+ * 手册内容装配（P1）：章节 markdown 以 ?raw 导入，
  * 白皮书式维护：加章节 = 加文件 + 登记一行。
  *
  * 截图管线：截图落 frontend/public/manual/img/，markdown 中以

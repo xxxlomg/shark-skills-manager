@@ -1,7 +1,7 @@
 import type { SummariesData } from "@/lib/api";
 
 /**
- * mock 用途速览（PLAN-13 工作流 S，?mock=1 预览用）。
+ * mock 用途速览（工作流 S，?mock=1 预览用）。
  * 两个 builtin 演示技能预置三段式结构化速览（何时调用/输入/输出）。
  * source_hash = MOCK_RAW 的真实 SHA-256（与 readSkillFile 返回值一致），
  * 演示态不触发「内容已变化」失效标。
